@@ -154,23 +154,6 @@ impl ReservationSchedule {
         // Identify conflicts.
         let mut conflicts = vec![];
         // First check the earliest time we can assign
-        /*if let Some(earliest_time) = earliest_time {
-            if let Some((instant, assignment)) =
-                schedule.assignments.range(..earliest_time).next_back()
-            {
-                if let Some(duration) = assignment.2 {
-                    if let Some(latest_time) = reservation.parameters.start_time.latest_start {
-                        if latest_time > *instant + duration {
-                            conflicts.push((*instant, *assignment))
-                        }
-                    }
-                } else {
-                    // Indefinite reservation. The previous reservation will conflict.
-                    conflicts.push((*instant, *assignment));
-                }
-            }
-        }*/
-
         for (instant, assignment) in range {
             conflicts.push((*instant, *assignment));
         }
@@ -253,23 +236,21 @@ fn test_conflict_checker() {
         cost_function: cost_func.clone(),
     };
 
-    let mut reservation_schedule = ReservationSchedule {
-        schedule: BTreeMap::new()
+    let indefinite_with_constraints = ReservationRequest {
+        parameters: ReservationParameters {
+            resource_name: "resource1".to_string(),
+            start_time: StartTimeRange {
+                earliest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 6, 10, 11).unwrap()),
+                latest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 7, 10, 11).unwrap()),
+            },
+            duration: None,
+        },
+        cost_function: cost_func.clone(),
     };
 
-    let res = reservation_schedule.check_potential_conflict(&indefinite_no_constraints);
-    assert_eq!(res.len(), 0);
 
-    reservation_schedule.schedule.insert(
-        Utc.with_ymd_and_hms(2023, 7, 8, 9, 10, 11).unwrap(),
-        Assignment(0usize, 0usize, None),
-    );
-    
-    let res = reservation_schedule.check_potential_conflict(&indefinite_no_constraints);
-    assert_eq!(res.len(), 1);
-
-    // Lets try a request that has no overlap with the reservation schedule.
-    let definite_request_starting_with_no_overlap = ReservationRequest {
+    // Definite requet with fixed time bound
+    let definite_request_starting_with_specified_start_time = ReservationRequest {
         parameters: ReservationParameters {
             resource_name: "resource1".to_string(),
             start_time: StartTimeRange {
@@ -281,6 +262,89 @@ fn test_conflict_checker() {
         cost_function: cost_func.clone(),
     };
 
-    let res = reservation_schedule.check_potential_conflict(&definite_request_starting_with_no_overlap);
+    let definite_request_with_no_earliest = ReservationRequest {
+        parameters: ReservationParameters {
+            resource_name: "resource1".to_string(),
+            start_time: StartTimeRange {
+                earliest_start: None,
+                latest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 7, 10, 11).unwrap()),
+            },
+            duration: Some(Duration::minutes(30)),
+        },
+        cost_function: cost_func.clone(),
+    };
+
+    let definite_request_starting_with_no_latest = ReservationRequest {
+        parameters: ReservationParameters {
+            resource_name: "resource1".to_string(),
+            start_time: StartTimeRange {
+                earliest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 6, 10, 11).unwrap()),
+                latest_start: None
+            },
+            duration: Some(Duration::minutes(30)),
+        },
+        cost_function: cost_func.clone(),
+    };
+
+    let mut reservation_schedule = ReservationSchedule {
+        schedule: BTreeMap::new()
+    };
+
+    let res = reservation_schedule.check_potential_conflict(&indefinite_no_constraints);
     assert_eq!(res.len(), 0);
+    
+    // Add an indefinite reservation to the schedule.
+    reservation_schedule.schedule.insert(
+        Utc.with_ymd_and_hms(2023, 7, 8, 9, 10, 11).unwrap(),
+        Assignment(0usize, 0usize, None),
+    );
+    
+    let res = reservation_schedule.check_potential_conflict(&indefinite_no_constraints);
+    assert_eq!(res.len(), 1);
+
+    let res = reservation_schedule.check_potential_conflict(&indefinite_with_constraints);
+    assert_eq!(res.len(), 1);
+
+    let res = reservation_schedule.check_potential_conflict(&definite_request_starting_with_specified_start_time);
+    assert_eq!(res.len(), 0);
+
+    // Clear schedule
+    let mut reservation_schedule = ReservationSchedule {
+        schedule: BTreeMap::new()
+    };
+
+    // Empty schedule no conflicts
+    let res = reservation_schedule.check_potential_conflict(&indefinite_no_constraints);
+    assert_eq!(res.len(), 0);
+
+    // Add a reservation
+    reservation_schedule.schedule.insert(
+        Utc.with_ymd_and_hms(2023, 7, 8, 2, 10, 11).unwrap(),
+        Assignment(0usize, 0usize, Some(Duration::minutes(30))),
+    );
+
+    // Add a request
+    let res = reservation_schedule.check_potential_conflict(&definite_request_starting_with_specified_start_time);
+    assert_eq!(res.len(), 0);
+
+    // Insert a potentially overlapping reservation
+    reservation_schedule.schedule.insert(
+        Utc.with_ymd_and_hms(2023, 7, 8, 5, 10, 11).unwrap(),
+        Assignment(0usize, 0usize, Some(Duration::minutes(90))),
+    );
+
+    let res = reservation_schedule.check_potential_conflict(&definite_request_starting_with_specified_start_time);
+    assert_eq!(res.len(), 1);
+
+    // Create a schedule with a reservation with a fixed set duration that does not overlap
+    let mut reservation_schedule = ReservationSchedule {
+        schedule: BTreeMap::new()
+    };
+
+
+    // Create a schedule with a single reservation with indefinite duration.
+    let mut reservation_schedule = ReservationSchedule {
+        schedule: BTreeMap::new()
+    };
+
 }
