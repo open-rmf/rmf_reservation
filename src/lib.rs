@@ -1,9 +1,8 @@
 use ::std::sync::Arc;
 
-use chrono::{DateTime, Duration, Utc, TimeZone};
+use chrono::{DateTime, Duration, TimeZone, Utc};
 use std::collections::{btree_map::BTreeMap, hash_map::HashMap, hash_set::HashSet};
 use std::hash::{Hash, Hasher};
-
 
 #[derive(Copy, Clone, Debug)]
 pub struct StartTimeRange {
@@ -93,13 +92,13 @@ impl ReservationSchedule {
     fn check_potential_conflict(
         &self,
         reservation: &ReservationRequest,
-    ) -> Vec<(DateTime<Utc>, Assignment)> {
+    ) -> std::collections::btree_map::Range<'_, DateTime<Utc>, Assignment> {
         let earliest_time = reservation.parameters.start_time.earliest_start;
 
         let latest_time = reservation.parameters.start_time.latest_start;
 
         // Identify potential conflicting range.
-        let range = if let Some(latest_time) = latest_time {
+        if let Some(latest_time) = latest_time {
             if let Some(earliest_time) = earliest_time {
                 let reservations_before = self.schedule.range(..earliest_time);
 
@@ -143,35 +142,25 @@ impl ReservationSchedule {
 
             // If a reservation has an earliest time, we still need to check the reservation
             // just before it to make sure that the reservation just before does not overlap
-            let earliest_time = if let Some((time_res, assignment)) =
-                reservations_before.into_iter().next_back()
-            {
-                if let Some(duration) = assignment.2 {
-                    if *time_res + duration > earliest_time {
-                        *time_res
+            let earliest_time =
+                if let Some((time_res, assignment)) = reservations_before.into_iter().next_back() {
+                    if let Some(duration) = assignment.2 {
+                        if *time_res + duration > earliest_time {
+                            *time_res
+                        } else {
+                            earliest_time
+                        }
                     } else {
-                        earliest_time
+                        *time_res
                     }
                 } else {
-                    *time_res
-                }
-            } else {
-                earliest_time
-            };
+                    earliest_time
+                };
 
             self.schedule.range(earliest_time..)
         } else {
             self.schedule.range(..)
-        };
-
-        // Identify conflicts.
-        let mut conflicts = vec![];
-        // First check the earliest time we can assign
-        for (instant, assignment) in range {
-            conflicts.push((*instant, *assignment));
         }
-
-        conflicts
     }
 }
 
@@ -355,7 +344,7 @@ fn test_conflict_checker() {
     };
 
     let res = reservation_schedule.check_potential_conflict(&indefinite_no_constraints);
-    assert_eq!(res.len(), 0);
+    assert_eq!(res.count(), 0);
 
     // Add an indefinite reservation to the schedule.
     reservation_schedule.schedule.insert(
@@ -364,22 +353,22 @@ fn test_conflict_checker() {
     );
 
     let res = reservation_schedule.check_potential_conflict(&indefinite_no_constraints);
-    assert_eq!(res.len(), 1);
+    assert_eq!(res.count(), 1);
 
     let res = reservation_schedule.check_potential_conflict(&indefinite_with_constraints);
-    assert_eq!(res.len(), 1);
+    assert_eq!(res.count(), 1);
 
     let res = reservation_schedule
         .check_potential_conflict(&definite_request_starting_with_specified_start_time);
-    assert_eq!(res.len(), 0);
+    assert_eq!(res.count(), 0);
 
     // The latest end time is before the last reservation so there should be no conflict
     let res = reservation_schedule.check_potential_conflict(&definite_request_with_no_earliest);
-    assert_eq!(res.len(), 0);
+    assert_eq!(res.count(), 0);
 
     // Since no latest time it could conflict with the last reservation
     let res = reservation_schedule.check_potential_conflict(&definite_request_with_no_latest);
-    assert_eq!(res.len(), 1);
+    assert_eq!(res.count(), 1);
 
     // Clear schedule
     let mut reservation_schedule = ReservationSchedule {
@@ -388,7 +377,7 @@ fn test_conflict_checker() {
 
     // Empty schedule no conflicts
     let res = reservation_schedule.check_potential_conflict(&indefinite_no_constraints);
-    assert_eq!(res.len(), 0);
+    assert_eq!(res.count(), 0);
 
     // Add a reservation
     reservation_schedule.schedule.insert(
@@ -399,7 +388,7 @@ fn test_conflict_checker() {
     // Add a request
     let res = reservation_schedule
         .check_potential_conflict(&definite_request_starting_with_specified_start_time);
-    assert_eq!(res.len(), 0);
+    assert_eq!(res.count(), 0);
 
     // Insert a potentially overlapping reservation
     reservation_schedule.schedule.insert(
@@ -409,6 +398,5 @@ fn test_conflict_checker() {
 
     let res = reservation_schedule
         .check_potential_conflict(&definite_request_starting_with_specified_start_time);
-    assert_eq!(res.len(), 1);
-
+    assert_eq!(res.count(), 1);
 }
