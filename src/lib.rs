@@ -47,12 +47,51 @@ impl ReservationRequest {
 #[derive(Copy, Clone, Debug)]
 struct Assignment(usize, usize, Option<Duration>);
 
+
+/// Represents a single resource's schedule.
 #[derive(Clone, Debug)]
 struct ReservationSchedule {
     schedule: BTreeMap<DateTime<Utc>, Assignment>,
 }
 
+enum NextInstant {
+    Beginning,
+    NextInstant(DateTime<Utc>),
+    NoMoreAllowed
+}
+
 impl ReservationSchedule {
+    /// Checks consistency
+    fn check_consistency(&self) -> bool
+    {
+        // Use unix epoch
+        let mut next_min_instant = NextInstant::Beginning;
+        for (instant, assignment) in &self.schedule {
+            match next_min_instant {
+                NextInstant::NoMoreAllowed => {
+                    return false;
+                },
+                _ => {
+                    if let NextInstant::NextInstant(time) = next_min_instant {
+                        if *instant <= time {
+                            return false;
+                        }
+                    }
+
+                    if let Some(duration) = assignment.2
+                    {
+                        next_min_instant = NextInstant::NextInstant(*instant + duration);
+                    }
+                    else
+                    {
+                        next_min_instant = NextInstant::NoMoreAllowed;
+                    }                
+                }
+            }
+        }
+        true
+    }
+
     /// Returns a list of assignments that may have a potential conflict with the relevant ReservationRequest
     /// TODO: Change to return range
     fn check_potential_conflict(
@@ -219,6 +258,46 @@ impl CostFunction for NoCost {
 
 #[cfg(test)]
 #[test]
+fn test_check_consistency() {
+    let mut sched = ReservationSchedule {
+        schedule: BTreeMap::new()
+    };
+    // Empty schedule should be consistent
+    assert!(sched.check_consistency());
+
+    // Create a schedule with no overlapping reservations
+    sched.schedule.insert(
+        Utc.with_ymd_and_hms(2023, 7, 8, 6, 10, 11).unwrap(),
+        Assignment(0usize, 0usize, Some(Duration::minutes(40))));
+
+    sched.schedule.insert(
+        Utc.with_ymd_and_hms(2023, 7, 8, 9, 10, 11).unwrap(),
+        Assignment(0usize, 0usize, None));
+    
+    assert!(sched.check_consistency());
+
+    // Add yet another reservation after the indefinite reservation
+    sched.schedule.insert(
+        Utc.with_ymd_and_hms(2023, 7, 8, 12, 10, 11).unwrap(), 
+        Assignment(0usize, 0usize, Some(Duration::minutes(40))));
+    assert!(!sched.check_consistency());
+
+    // Cler and create a schedule with conflicts
+    sched.schedule.clear();
+    sched.schedule.insert(
+        Utc.with_ymd_and_hms(2023, 7, 8, 6, 10, 11).unwrap(),
+        Assignment(0usize, 0usize, Some(Duration::minutes(40))));
+
+    sched.schedule.insert(
+        Utc.with_ymd_and_hms(2023, 7, 8, 6, 15, 11).unwrap(),
+        Assignment(0usize, 0usize, None));
+    
+    assert!(!sched.check_consistency());
+}
+
+
+#[cfg(test)]
+#[test]
 fn test_conflict_checker() {
 
     let cost_func = Arc::new(NoCost {});
@@ -274,7 +353,7 @@ fn test_conflict_checker() {
         cost_function: cost_func.clone(),
     };
 
-    let definite_request_starting_with_no_latest = ReservationRequest {
+    let definite_request_with_no_latest = ReservationRequest {
         parameters: ReservationParameters {
             resource_name: "resource1".to_string(),
             start_time: StartTimeRange {
@@ -307,6 +386,14 @@ fn test_conflict_checker() {
 
     let res = reservation_schedule.check_potential_conflict(&definite_request_starting_with_specified_start_time);
     assert_eq!(res.len(), 0);
+
+    // The latest end time is before the last reservation so there should be no conflict
+    let res = reservation_schedule.check_potential_conflict(&definite_request_with_no_earliest);
+    assert_eq!(res.len(), 0);
+
+    // Since no latest time it could conflict with the last reservation
+    let res = reservation_schedule.check_potential_conflict(&definite_request_with_no_latest);
+    assert_eq!(res.len(), 1);
 
     // Clear schedule
     let mut reservation_schedule = ReservationSchedule {
