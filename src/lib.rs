@@ -1,6 +1,8 @@
 use ::std::sync::Arc;
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
+use itertools::Itertools;
+
 use std::collections::{btree_map::BTreeMap, hash_map::HashMap, hash_set::HashSet};
 use std::hash::{Hash, Hasher};
 
@@ -25,6 +27,25 @@ pub trait CostFunction {
 pub struct ReservationRequest {
     parameters: ReservationParameters,
     cost_function: Arc<dyn CostFunction>,
+}
+
+impl ReservationRequest {
+    fn satisfies_request(&self, start_time: &DateTime<Utc>, duration: Option<Duration>) -> bool
+    {
+        if let Some(earliest_start_time) = self.parameters.start_time.earliest_start {
+            if earliest_start_time > *start_time {
+                return false;
+            }
+        }
+
+        if let Some(latest_start_time) = self.parameters.start_time.latest_start {
+            if latest_start_time < *start_time {
+                return false;
+            }
+        }
+
+        duration == self.parameters.duration
+    }
 }
 
 struct PotentialAssignment {
@@ -59,10 +80,14 @@ enum NextInstant {
     NoMoreAllowed,
 }
 
+enum SchedChange {
+    Remove(DateTime<Utc>),
+    Add(DateTime<Utc>, Assignment)
+}
+
 impl ReservationSchedule {
     /// Checks consistency
     fn check_consistency(&self) -> bool {
-        // Use unix epoch
         let mut next_min_instant = NextInstant::Beginning;
         for (instant, assignment) in &self.schedule {
             match next_min_instant {
@@ -162,13 +187,132 @@ impl ReservationSchedule {
             self.schedule.range(..)
         }
     }
+
+    fn get_possible_schedule_changes(&self, res_idx: usize, choice_idx: usize, request: &ReservationRequest) -> Vec<SchedChange>
+    {
+        let mut res = vec!();
+
+        let res_range = self.check_potential_conflict(request);
+
+        let mut range_iter_copy = res_range.clone();
+
+        let mut num_potential_conflicts = 0;
+       
+        // One possibility is we unassign the item from the schedule.
+        // TODO(arjo): Don't do this unless there is a real conflict.
+        // I.E: if we can't assign the duration because there is a reservation
+        // in the way.
+        for (time, assignment) in res_range {
+            res.push(SchedChange::Remove(*time));
+            num_potential_conflicts += 1;
+        }
+
+        // Another option is to add the current reservation
+        // Get earliest insertion point
+        let earliest_insertion_point = if let Some(earliest) = request.parameters.start_time.earliest_start {
+            earliest
+        }
+        else {
+            let mut range_iter_copy2 = range_iter_copy.clone();
+            if let Some((time, _)) = range_iter_copy.next() {
+                *time
+            } else {
+                Utc::now()
+            }
+        };
+
+        // Get latest insertion point
+        let latest_insertion_point = if let Some(latest) = request.parameters.start_time.latest_start {
+            latest
+        }
+        else {
+            let mut range_iter_copy2 = range_iter_copy.clone();
+            if let Some((time, assignment)) = range_iter_copy.next_back() {
+                if let Some(duration) = assignment.2 {
+                    *time + duration
+                }
+                else  {
+                    *time
+                }
+            } else {
+                Utc::now()
+            }
+        };
+
+
+        // This is easy for indefinite reservations as only one indefinte reservation can be a to the end of a schedule
+        if request.parameters.duration == None {
+            if let Some((last_req_time, last_req_assignment)) = range_iter_copy.next_back(){
+                if let Some(duration) = last_req_assignment.2 {
+                    if *last_req_time + duration > earliest_insertion_point && *last_req_time + duration <= latest_insertion_point {
+                        res.push(SchedChange::Add(*last_req_time + duration, Assignment(res_idx, choice_idx, None)));
+                    }
+                }
+            }
+            else
+            {
+                //guess best insertion point. For now try to assign it to latest possible time so that other reservations can be serviced.
+                res.push(SchedChange::Add(latest_insertion_point, Assignment(res_idx, choice_idx, None)));
+            }
+        }
+        if let Some(req_dur) = request.parameters.duration
+        {
+            if num_potential_conflicts == 0 {
+                res.push(SchedChange::Add(earliest_insertion_point, Assignment(res_idx, choice_idx, request.parameters.duration)));
+            }
+            else {
+                for ((res1_time, res1_dur), (res2_time, res2_dur)) in range_iter_copy.clone().tuple_windows() {
+                    // TODO(arjo): Remove unwrap
+                    let last_end = *res1_time + res1_dur.2.expect("Expect all reservations before the last one to have a duration.");
+                    let time_gap = *res2_time - last_end;
+
+                    if time_gap >= req_dur && request.satisfies_request(&last_end, Some(req_dur)) {
+                        // Fit reservation in.
+                        res.push(SchedChange::Add(last_end, Assignment(res_idx, choice_idx, Some(req_dur))))
+                    }
+                }
+
+                // Try before the first reservation
+                if let Some((first_reservation_start_time, _)) = range_iter_copy.clone().next() {
+                    let squeezed_before = *first_reservation_start_time - req_dur;
+                    if request.satisfies_request(&squeezed_before, Some(req_dur))
+                    {
+                        res.push(SchedChange::Add(squeezed_before, Assignment(res_idx, choice_idx, Some(req_dur))))
+                    }
+                    let earliest_end = earliest_insertion_point + req_dur;
+                    if earliest_end < *first_reservation_start_time && request.satisfies_request(&earliest_insertion_point, Some(req_dur)) {
+                        res.push(SchedChange::Add(earliest_insertion_point, Assignment(res_idx, choice_idx, Some(req_dur))));
+                    }
+                }
+                else {
+                    // There's nothing just insert the earliest reservation and call it a day.
+                    res.push(SchedChange::Add(earliest_insertion_point, Assignment(res_idx, choice_idx, Some(req_dur))));
+                }
+                
+
+                if let Some((last_reservation_start_time, last_reservation_details)) = range_iter_copy.clone().next_back() {
+                    if let Some(duration) = last_reservation_details.2 {
+                        let last_end_time =  *last_reservation_start_time + duration;
+
+                        if request.satisfies_request(&last_end_time, Some(req_dur)) {
+                            res.push(SchedChange::Add(last_end_time,  Assignment(res_idx, choice_idx, Some(req_dur))));
+                        }
+                    }
+                }
+            }
+        }
+
+
+        res
+    }
+
 }
 
 #[derive(Clone, Debug, PartialEq)]
 struct ReservationState {
     unassigned: HashSet<usize>,
-    assigned: HashSet<usize>,
-    assignments: ReservationSchedule,
+    assigned: HashMap<usize, String>,
+    assignments: HashMap<String, ReservationSchedule>,
 }
 
 impl Hash for ReservationState {
@@ -181,24 +325,38 @@ impl Hash for ReservationState {
             f.hash(state);
         }
 
-        self.assignments.hash(state);
+        for f in &self.assignments {
+            f.hash(state);
+        }
     }
 }
 
 impl ReservationState {
-    fn create_unassign_state(self, time: DateTime<Utc>) -> Self {
-        let mut new_self = self; // TODO(arjo): Implement views via traits.
-        if let Some((_, assignment)) = new_self.assignments.schedule.remove_entry(&time) {
+    fn create_empty() -> Self {
+        Self { unassigned: HashSet::new(), assigned: HashMap::new(), assignments: HashMap::new() }
+    }
+    fn create_unassign_state(self, time: DateTime<Utc>, resource: &String) -> Self {
+        let mut new_self = self.clone(); // TODO(arjo): Implement views via traits.
+        if let Some(schedule)= new_self.assignments.get_mut(resource) {
+        if let Some((_, assignment)) = schedule.schedule.remove_entry(&time) {
             new_self.assigned.remove(&assignment.0);
             new_self.unassigned.insert(assignment.0);
-        }
+        }}
+        new_self
+    }
+
+    fn create_assign_state(self, time: DateTime<Utc>, assignment: Assignment, resource: &String) -> Self {
+        let mut new_self = self.clone(); // TODO(arjo): Implement views via traits.
+        new_self.unassigned.remove(&assignment.0);
+        new_self.assigned.insert(assignment.1, resource.clone());
         new_self
     }
 }
 
+
 pub struct SyncReservationSystem {
     reservation_queue: Vec<Vec<ReservationRequest>>,
-    current_state: HashMap<String, ReservationState>,
+    current_state: ReservationState,
     cummulative_cost: f64,
 }
 
@@ -206,7 +364,7 @@ impl SyncReservationSystem {
     pub fn new() -> Self {
         Self {
             reservation_queue: vec![],
-            current_state: HashMap::new(),
+            current_state: ReservationState::create_empty(),
             cummulative_cost: 0f64,
         }
     }
@@ -227,6 +385,48 @@ impl CostFunction for NoCost {
         0f64
     }
 }
+
+#[cfg(test)]
+#[test]
+fn test_satisfies_request() {
+    let req = ReservationRequest {
+        parameters: ReservationParameters {
+            resource_name: "test".to_string(), 
+            duration: Some(Duration::minutes(30)), 
+            start_time: StartTimeRange { earliest_start: None, latest_start: None } },
+        cost_function: Arc::new(NoCost{})
+    };
+
+    let start_time = Utc.with_ymd_and_hms(2023, 7, 8, 6, 10, 11).unwrap();
+    assert!(req.satisfies_request(&start_time, Some(Duration::minutes(30))));
+    assert!(req.satisfies_request(&start_time, Some(Duration::minutes(20))) == false);
+    assert!(req.satisfies_request(&start_time, None) == false);
+
+    let req = ReservationRequest {
+        parameters: ReservationParameters {
+            resource_name: "test".to_string(), 
+            duration: Some(Duration::minutes(30)), 
+            start_time: StartTimeRange {
+                earliest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 6, 10, 11).unwrap()), 
+                latest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 8, 10, 11).unwrap()) 
+            }
+        },
+        cost_function: Arc::new(NoCost{})
+    };
+
+    // Too early
+    let start_time = Utc.with_ymd_and_hms(2023, 7, 8, 5, 10, 11).unwrap();
+    assert!(req.satisfies_request(&start_time, Some(Duration::minutes(30))) == false);
+
+    // Too late
+    let start_time = Utc.with_ymd_and_hms(2023, 7, 8, 10, 10, 11).unwrap();
+    assert!(req.satisfies_request(&start_time, Some(Duration::minutes(30))) == false);
+
+    // OK
+    let start_time = Utc.with_ymd_and_hms(2023, 7, 8, 7, 10, 11).unwrap();
+    assert!(req.satisfies_request(&start_time, Some(Duration::minutes(30))));
+}
+
 
 #[cfg(test)]
 #[test]
