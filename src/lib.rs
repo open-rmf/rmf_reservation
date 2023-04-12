@@ -603,7 +603,7 @@ enum VoucherState {
     Claimed
 }
 
-enum RequestError {
+pub enum RequestError {
     NonExistantResource(String)
 }
 
@@ -679,7 +679,7 @@ pub struct AsyncReservationSystem {
     voucher_max_idx: usize,
     work_queue: Arc<utils::queue::WorkQueue<Action>>,
     ticket_state: Arc<Mutex<HashMap<ReservationVoucher, VoucherState>>>,
-    ticket_wakers: Arc<Mutex<HashMap<ReservationVoucher, Waker>>>
+    ticket_wakers: Arc<Mutex<HashMap<ReservationVoucher, Waker>>>,
     resources: HashSet<String>
 }
 
@@ -703,7 +703,7 @@ impl AsyncReservationSystem {
     }
 
     pub fn request_reservation(&mut self, alternatives: Vec<ReservationRequest>) -> Result<ReservationVoucher, RequestError> {
-        for alternative in alternatives {
+        for alternative in &alternatives {
             if !self.resources.contains(&alternative.parameters.resource_name) {
                 return Err(RequestError::NonExistantResource(alternative.parameters.resource_name.clone()));
             }
@@ -1165,9 +1165,15 @@ fn test_async_reservation() {
     let alternatives = vec![alternative1.clone()];
 
     let voucher = reservation_system.request_reservation(alternatives);
-
-    let result = block_on(reservation_system.claim(voucher));
-    assert!(matches!(result, Ok(_)));
+    if let Ok(voucher) = voucher {
+        let result = block_on(reservation_system.claim(voucher));
+        assert!(matches!(result, Ok(_)));
+    }
+    else
+    {
+        // Expect a valid reservation ticket.
+        assert!(false);
+    }
 
     reservation_system.work_queue.push(Action::Exit);
     res_sys_thread.join();
