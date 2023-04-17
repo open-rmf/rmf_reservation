@@ -559,8 +559,54 @@ impl SyncReservationSystem {
         results
     }
 
-    pub fn force_reservation(&mut self, reservation: usize) {
-        todo!("Implement forced reservations");
+    fn search_for_solution_to_problem(&mut self, reservation: usize) -> Option<(ReservationState, Vec<SchedChange>)> {
+        let mut explored = HashSet::new();
+        let mut parent: HashMap<ReservationState, (ReservationState, SchedChange)> = HashMap::new();
+
+        let mut queue = VecDeque::new();
+        queue.push_back(self.current_state.clone());
+        explored.insert(self.current_state.clone());
+
+        while let Some(state) = queue.pop_front() {
+            let next_states = self.next_states(&state);
+            for (next_state, change) in next_states {
+                if explored.contains(&next_state) {
+                    continue;
+                }
+                if next_state.assigned.contains_key(&reservation) {
+                    // Retrace parent
+                    let mut cursor = state.clone();
+                    let mut rollout_plan = vec!();
+                    rollout_plan.push(change.clone());
+                    while cursor != self.current_state {
+                        if let Some((state, change)) = parent.get(&cursor) {
+                            rollout_plan.push(change.clone());
+                            cursor = state.clone();
+                        }
+                        else {
+                            panic!("Should never get here");
+                        }
+                    }
+                    return Some((next_state.clone(), rollout_plan));
+                }
+                explored.insert(next_state.clone());
+                queue.push_back(next_state.clone());
+                parent.insert(next_state, (state.clone(), change));
+            }
+        }
+
+        None
+    }
+
+    // Forcing a reservation has a much simpler target condition - 
+    // as long as the forced reservation has a simple solution, the system will return a consistent
+    // the easiest way to satisfy a reservation. 
+    pub fn force_reservation(&mut self, reservation: usize) -> bool {
+        if let Some((state, _changes)) = self.search_for_solution_to_problem(reservation) {
+            self.current_state = state;
+            return true;
+        }
+        false
     }
 
     pub fn request_reservation(&mut self, reservations: Vec<ReservationRequest>) -> usize {
@@ -1025,24 +1071,6 @@ fn test_branching_operations() {
     }
 }
 
-fn test_assign_unassign_states() {
-    let resources = vec!["station1".to_string(), "station2".to_string()];
-    let mut reservation_system = SyncReservationSystem::create_new_with_resources(&resources);
-
-    let alternative1 = ReservationRequest {
-        parameters: ReservationParameters {
-            resource_name: "station1".to_string(),
-            start_time: StartTimeRange {
-                earliest_start: None,
-                latest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 7, 10, 11).unwrap()),
-            },
-            duration: Some(Duration::minutes(30)),
-        },
-        cost_function: Arc::new(NoCost {}),
-    };
-
-    let simple_request = vec![alternative1.clone()];
-}
 
 #[cfg(test)]
 #[test]
