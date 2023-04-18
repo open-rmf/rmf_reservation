@@ -679,7 +679,8 @@ impl Future for ClaimResult {
 
     fn poll(self: Pin<&mut ClaimResult>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut res_sys = self.reservation_system.lock().unwrap();
-        if let Some(ticket_state) = self.ticket_state.lock().unwrap().get(&self.voucher) {
+        let mut ticket_lock =  self.ticket_state.lock().unwrap();
+        if let Some(ticket_state) = ticket_lock.get(&self.voucher) {
             match ticket_state {
                 VoucherState::Claimed => {
                     Poll::Ready(Err(ClaimError::VoucherClaimedAlready))
@@ -700,11 +701,13 @@ impl Future for ClaimResult {
                     // Check if within time limit
                     res_sys.claimed_requests.insert(*id);
                     if let Some((resource, _start_time)) = res_sys.current_state.assigned.get(id) {
+                        ticket_lock.insert(self.voucher.clone(), VoucherState::Claimed);
                         Poll::Ready(Ok(resource.clone()))
                     }
                     else {
                         res_sys.force_reservation(*id);
                         if let Some((resource, _start_time)) = res_sys.current_state.assigned.get(id) {
+                            ticket_lock.insert(self.voucher.clone(), VoucherState::Claimed);
                             Poll::Ready(Ok(resource.clone()))
                         }
                         else {
