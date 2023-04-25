@@ -38,7 +38,7 @@ fn test_workqueue() {
 
     let queue = Arc::new(WorkQueue::<i32>::new());
     let queue2 = queue.clone();
-    let result = Arc::new(Mutex::new(0));
+    let _result = Arc::new(Mutex::new(0));
 
     let producer = thread::spawn(move || {
         queue.push(5i32);
