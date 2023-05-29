@@ -1,6 +1,6 @@
-use std::{fmt, collections::VecDeque};
+use std::{collections::VecDeque, fmt};
 
-use chrono::{Utc, DateTime};
+use chrono::{DateTime, Utc};
 use nannou::prelude::*;
 use nannou_egui::{self, egui, Egui};
 use rmf_reservations::AsyncReservationSystem;
@@ -9,35 +9,36 @@ fn main() {
     nannou::app(model).update(update).run();
 }
 
-
 enum RobotAction {
     MoveTo(Vec2),
-    Wait(chrono::DateTime<Utc>)
+    Wait(chrono::DateTime<Utc>),
 }
 
-struct Robot
-{
+struct Robot {
     id: usize,
     holding_point: Vec2,
     work_point: Vec2,
     current_position: Vec2,
-    goals: VecDeque<RobotAction>
+    goals: VecDeque<RobotAction>,
 }
 
-impl Robot
-{
+impl Robot {
     fn new(id: usize, holding_point: Vec2, work_point: Vec2) -> Self {
         Self {
             id,
             work_point,
             holding_point: holding_point.clone(),
             current_position: holding_point,
-            goals: VecDeque::new()
+            goals: VecDeque::new(),
         }
     }
 
     fn draw(&self, draw: &Draw) {
-        draw.line().start(self.holding_point).end(self.work_point).weight(5.0).color(PURPLE);
+        draw.line()
+            .start(self.holding_point)
+            .end(self.work_point)
+            .weight(5.0)
+            .color(PURPLE);
 
         draw.ellipse()
             .x_y(self.holding_point.x, self.holding_point.y)
@@ -48,23 +49,23 @@ impl Robot
             .x_y(self.work_point.x, self.work_point.y)
             .color(STEELBLUE)
             .radius(20.0);
-        
+
         draw.ellipse()
             .x_y(self.current_position.x, self.current_position.y)
             .color(ORANGE)
             .radius(15.0);
 
-        draw.text(format!("Robot {}", self.id).as_str()).x_y(self.current_position.x, self.current_position.y).color(BLACK);
+        draw.text(format!("Robot {}", self.id).as_str())
+            .x_y(self.current_position.x, self.current_position.y)
+            .color(BLACK);
     }
 
-    fn update_position(&mut self, update: &Update)
-    {
+    fn update_position(&mut self, update: &Update) {
         if self.goals.len() == 0 {
             return;
         }
 
-        if let RobotAction::MoveTo(goal)  = self.goals[0] 
-        {
+        if let RobotAction::MoveTo(goal) = self.goals[0] {
             let dir = (goal - self.current_position);
             if dir.length() < 1.0 {
                 self.goals.pop_front();
@@ -76,21 +77,22 @@ impl Robot
     }
 }
 
-struct Charger
-{
+struct Charger {
     name: String,
-    location: Vec2
+    location: Vec2,
 }
 
-impl Charger
-{
+impl Charger {
     fn draw(&self, draw: &Draw) {
-        draw.ellipse().x_y(self.location.x, self.location.y).color(GREEN).radius(20.0);
-        draw.text(self.name.as_str()).x_y(self.location.x, self.location.y).color(BLACK);
+        draw.ellipse()
+            .x_y(self.location.x, self.location.y)
+            .color(GREEN)
+            .radius(20.0);
+        draw.text(self.name.as_str())
+            .x_y(self.location.x, self.location.y)
+            .color(BLACK);
     }
 }
-
-
 
 struct Model {
     window_id: window::Id,
@@ -100,22 +102,25 @@ struct Model {
     robots: Vec<Robot>,
     chargers: Vec<Charger>,
     simulated_time: DateTime<Utc>,
-    robot_option: usize
+    robot_option: usize,
 }
 
 fn model(app: &App) -> Model {
-    let window_id = app.new_window()
+    let window_id = app
+        .new_window()
         .view(view)
-        .raw_event(raw_window_event).build().unwrap();
+        .raw_event(raw_window_event)
+        .build()
+        .unwrap();
     let resources = vec!["Charger 1".to_string(), "Charger 2".to_string()];
-    let charger_positions = vec![Vec2::new(50.0,50.0), Vec2::new(-50.0,50.0)];
+    let charger_positions = vec![Vec2::new(50.0, 50.0), Vec2::new(-50.0, 50.0)];
 
     let chargers = {
-        let mut chargers = vec!();
+        let mut chargers = vec![];
         for i in 0..resources.len() {
-            chargers.push(Charger{
+            chargers.push(Charger {
                 name: resources[i].clone(),
-                location: charger_positions[i].clone()
+                location: charger_positions[i].clone(),
             })
         }
         chargers
@@ -128,15 +133,15 @@ fn model(app: &App) -> Model {
         Robot::new(1, Vec2::new(200.0, 0.0), Vec2::new(300.0, 0.0)),
         Robot::new(2, Vec2::new(0.0, 200.0), Vec2::new(0.0, 300.0)),
     ];
-    Model { 
-        window_id, 
+    Model {
+        window_id,
         res_sys: AsyncReservationSystem::new(&resources),
         egui,
         current_schedule_display: 0,
         robots,
         chargers,
         simulated_time: Utc::now(),
-        robot_option: 0
+        robot_option: 0,
     }
 }
 
@@ -153,26 +158,38 @@ fn update(_app: &App, model: &mut Model, update: Update) {
     egui::Window::new("Schedule Inspector").show(&ctx, |ui| {
         // Resolution slider
         ui.horizontal(|ui| {
-            if (ui.selectable_label(model.current_schedule_display == 0, "Charger 1").clicked()) {
+            if (ui
+                .selectable_label(model.current_schedule_display == 0, "Charger 1")
+                .clicked())
+            {
                 model.current_schedule_display = 0;
             }
-            if (ui.selectable_label(model.current_schedule_display == 1, "Charger 2").clicked()) {
+            if (ui
+                .selectable_label(model.current_schedule_display == 1, "Charger 2")
+                .clicked())
+            {
                 model.current_schedule_display = 1;
             }
         });
-        
     });
 
     egui::Window::new("Task Dispatcher").show(&ctx, |ui| {
         // Which robot to dispatch
         egui::ComboBox::from_label("Robot To Dispatch")
-            .selected_text(format!("Robot {}", model.robot_option)).show_ui(ui, |ui| {
-                for robot_idx in 0..model.robots.len(){
-                    ui.selectable_value(&mut model.robot_option, robot_idx, format!("Robot {}", robot_idx));
+            .selected_text(format!("Robot {}", model.robot_option))
+            .show_ui(ui, |ui| {
+                for robot_idx in 0..model.robots.len() {
+                    ui.selectable_value(
+                        &mut model.robot_option,
+                        robot_idx,
+                        format!("Robot {}", robot_idx),
+                    );
                 }
             });
         if ui.button("Dispatch").clicked() {
-            model.robots[model.robot_option].goals.push_back(RobotAction::MoveTo(Vec2::new(0.0,0.0)));
+            model.robots[model.robot_option]
+                .goals
+                .push_back(RobotAction::MoveTo(Vec2::new(0.0, 0.0)));
         }
     });
 
@@ -200,8 +217,6 @@ fn view(app: &App, model: &Model, frame: Frame) {
         robot.draw(&draw);
     }
 
-    
     draw.to_frame(app, &frame).unwrap();
     model.egui.draw_to_frame(&frame).unwrap();
 }
-

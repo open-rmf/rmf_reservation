@@ -1,19 +1,21 @@
-
-use std::{ collections::VecDeque, sync::{Mutex, Condvar} };
+use std::{
+    collections::VecDeque,
+    sync::{Condvar, Mutex},
+};
 pub struct WorkQueue<T> {
     data: Mutex<VecDeque<T>>,
-    cv: Condvar
+    cv: Condvar,
 }
 
 impl<T> WorkQueue<T> {
     pub fn new() -> Self {
         Self {
             data: Mutex::new(VecDeque::new()),
-            cv: Condvar::new()
+            cv: Condvar::new(),
         }
     }
 
-    pub fn push(&self,  work_item: T) {
+    pub fn push(&self, work_item: T) {
         let mut data = self.data.lock().unwrap();
         data.push_back(work_item);
         self.cv.notify_all();
@@ -44,10 +46,7 @@ fn test_workqueue() {
         queue.push(5i32);
     });
 
-
-    let consumer = thread::spawn(move || {
-        queue2.wait_for_work()
-    });
+    let consumer = thread::spawn(move || queue2.wait_for_work());
 
     producer.join();
     let result = consumer.join().unwrap();

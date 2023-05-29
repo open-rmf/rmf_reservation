@@ -1,7 +1,7 @@
-use std::future::{Future};
-use std::pin::Pin;
 use ::std::sync::{Arc, Mutex};
-use std::task::{Poll, Context, Waker};
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll, Waker};
 use std::thread::JoinHandle;
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -41,29 +41,13 @@ pub trait CostFunction {
     fn cost(&self, parameters: &ReservationParameters, instant: &DateTime<Utc>) -> f64;
 }
 
-/// This implements a solution handling interface.
-pub trait SolutionHandler {
-    /// Propose final solution. If this solution is unacceptable at the moment for whatever reason the
-    /// fleet adapter should return false. A rollout will not take place.
-    fn propose_solution(&self, time: &DateTime<Utc>, duration: Duration, resource: String) -> bool;
-
-    /// Callback is triggered when a solution is claimed, or there is a change in the solution
-    fn solution_claimed(&self) -> bool;
-
-    /// Callback is triggered when a solution has been removed. I.E. Robot no longer has access to the resource.
-    /// It may also be triggered when there is a change in the solution. This would translate to an unassign call
-    /// followed by an assign call
-    fn unassign_solution(&self) -> bool;
-}
-
-
 /// Reservation Request represents one possible alternative reservation
 #[derive(Clone)]
 pub struct ReservationRequest {
     /// The parameters
     pub parameters: ReservationParameters,
     /// Cost function to use
-    pub cost_function: Arc<dyn CostFunction + Send + Sync>
+    pub cost_function: Arc<dyn CostFunction + Send + Sync>,
 }
 
 impl ReservationRequest {
@@ -218,7 +202,7 @@ impl ReservationSchedule {
         res_idx: usize,
         choice_idx: usize,
         request: &ReservationRequest,
-        claimed_requests: &HashSet<usize>
+        claimed_requests: &HashSet<usize>,
     ) -> Vec<SchedChange> {
         let mut res = vec![];
 
@@ -233,8 +217,7 @@ impl ReservationSchedule {
         // I.E: if we can't assign the duration because there is a reservation
         // in the way.
         for (time, assignment) in res_range {
-            if claimed_requests.contains(&assignment.0) 
-            {
+            if claimed_requests.contains(&assignment.0) {
                 // Do not reshuffle "claimed" requests
                 // TODO(arjo): Consider just deleting such Assignments.
                 continue;
@@ -419,7 +402,9 @@ impl ReservationState {
     ) -> Self {
         let mut new_self = self.clone(); // TODO(arjo): Implement views via traits.
         new_self.unassigned.remove(&assignment.0);
-        new_self.assigned.insert(assignment.0, (resource.clone(), time));
+        new_self
+            .assigned
+            .insert(assignment.0, (resource.clone(), time));
         new_self
             .assignments
             .get_mut(resource)
@@ -444,7 +429,7 @@ impl ReservationState {
         res_idx: usize,
         choice_idx: usize,
         req: &ReservationRequest,
-        claimed_requests: &HashSet<usize>
+        claimed_requests: &HashSet<usize>,
     ) -> Vec<(Self, SchedChange)> {
         let mut results = vec![];
         let changes = if let Some(schedule) = self.assignments.get(&req.parameters.resource_name) {
@@ -497,11 +482,14 @@ impl SyncReservationSystem {
             reservation_queue: vec![],
             current_state: ReservationState::create_new_with_resources(resources),
             claimed_requests: HashSet::new(),
-            cummulative_cost: 0f64
+            cummulative_cost: 0f64,
         }
     }
 
-    fn next_states(&self, reservation_state: &ReservationState) -> Vec<(ReservationState, SchedChange)> {
+    fn next_states(
+        &self,
+        reservation_state: &ReservationState,
+    ) -> Vec<(ReservationState, SchedChange)> {
         let mut result = vec![];
         for res in &reservation_state.unassigned {
             // Attempt each reservation alternative
@@ -510,7 +498,7 @@ impl SyncReservationSystem {
                     *res,
                     choice_idx,
                     &self.reservation_queue[*res][choice_idx],
-                    &self.claimed_requests
+                    &self.claimed_requests,
                 );
                 result.append(&mut states);
             }
@@ -518,7 +506,7 @@ impl SyncReservationSystem {
         result
     }
 
-    fn search_for_solution(&self) -> Vec<(ReservationState,  Vec<SchedChange>)> {
+    fn search_for_solution(&self) -> Vec<(ReservationState, Vec<SchedChange>)> {
         // TODO remove HashSet. Move to view based method
         let mut explored = HashSet::new();
         let mut results = vec![];
@@ -537,14 +525,13 @@ impl SyncReservationSystem {
                 if next_state.unassigned.len() == 0 {
                     // Retrace parent
                     let mut cursor = state.clone();
-                    let mut rollout_plan = vec!();
+                    let mut rollout_plan = vec![];
                     rollout_plan.push(change.clone());
                     while cursor != self.current_state {
                         if let Some((state, change)) = parent.get(&cursor) {
                             rollout_plan.push(change.clone());
                             cursor = state.clone();
-                        }
-                        else {
+                        } else {
                             panic!("Should never get here");
                         }
                     }
@@ -559,7 +546,10 @@ impl SyncReservationSystem {
         results
     }
 
-    fn search_for_solution_to_problem(&mut self, reservation: usize) -> Option<(ReservationState, Vec<SchedChange>)> {
+    fn search_for_solution_to_problem(
+        &mut self,
+        reservation: usize,
+    ) -> Option<(ReservationState, Vec<SchedChange>)> {
         let mut explored = HashSet::new();
         let mut parent: HashMap<ReservationState, (ReservationState, SchedChange)> = HashMap::new();
 
@@ -576,14 +566,13 @@ impl SyncReservationSystem {
                 if next_state.assigned.contains_key(&reservation) {
                     // Retrace parent
                     let mut cursor = state.clone();
-                    let mut rollout_plan = vec!();
+                    let mut rollout_plan = vec![];
                     rollout_plan.push(change.clone());
                     while cursor != self.current_state {
                         if let Some((state, change)) = parent.get(&cursor) {
                             rollout_plan.push(change.clone());
                             cursor = state.clone();
-                        }
-                        else {
+                        } else {
                             panic!("Should never get here");
                         }
                     }
@@ -598,9 +587,9 @@ impl SyncReservationSystem {
         None
     }
 
-    // Forcing a reservation has a much simpler target condition - 
+    // Forcing a reservation has a much simpler target condition -
     // as long as the forced reservation has a simple solution, the system will return a consistent
-    // the easiest way to satisfy a reservation. 
+    // the easiest way to satisfy a reservation.
     pub fn force_reservation(&mut self, reservation: usize) -> bool {
         if let Some((state, _changes)) = self.search_for_solution_to_problem(reservation) {
             self.current_state = state;
@@ -618,18 +607,14 @@ impl SyncReservationSystem {
         let mut soln = self.search_for_solution();
         if soln.len() > 0 {
             // TODO(arjo) find best solution
-            soln.sort_by(|a, b| { a.1.len().partial_cmp(&b.1.len()).unwrap()});
+            soln.sort_by(|a, b| a.1.len().partial_cmp(&b.1.len()).unwrap());
 
             // Compute changes
 
             for sched_change in &soln[0].1 {
                 match sched_change {
-                    SchedChange::Add(res, assignment) => {
-
-                    },
-                    SchedChange::Remove(time) => {
-
-                    }
+                    SchedChange::Add(res, assignment) => {}
+                    SchedChange::Remove(time) => {}
                 }
             }
             self.current_state = soln[0].0.clone();
@@ -640,24 +625,24 @@ impl SyncReservationSystem {
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd, Ord)]
 pub struct ReservationVoucher {
-    index: usize
+    index: usize,
 }
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 enum VoucherState {
     OnQueue,
     Solved(usize),
-    Claimed
+    Claimed,
 }
 
 pub enum RequestError {
-    NonExistantResource(String)
+    NonExistantResource(String),
 }
 
 enum Action {
     Add(ReservationVoucher, Vec<ReservationRequest>),
     Cancel(ReservationVoucher),
-    Exit
+    Exit,
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -666,14 +651,10 @@ pub enum ClaimError {
     OutOfTimeBounds,
     VoucherClaimedAlready,
     ResourcesTooBusy,
-    Other(String)
+    Other(String),
 }
 
 pub struct ClaimResult {
-    /*reservation_system: Arc<Mutex<SyncReservationSystem>>,
-    ticket_state: Arc<Mutex<HashMap<ReservationVoucher, VoucherState>>>,
-    ticket_wakers: Arc<Mutex<HashMap<ReservationVoucher, Waker>>>,
-    voucher: ReservationVoucher,*/
     voucher_context: Arc<Mutex<VoucherContext>>,
     voucher: ReservationVoucher,
 }
@@ -684,11 +665,10 @@ impl Future for ClaimResult {
     fn poll(self: Pin<&mut ClaimResult>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut voucher_ctx = self.voucher_context.lock().unwrap();
 
-        let ticket_state: Result<VoucherState, ClaimError> = 
+        let ticket_state: Result<VoucherState, ClaimError> =
             if let Some(ticket_state) = voucher_ctx.ticket_state.get(&self.voucher) {
                 Ok(*ticket_state)
-            }
-            else{          
+            } else {
                 Err(ClaimError::InvalidVoucher)
             };
 
@@ -697,36 +677,45 @@ impl Future for ClaimResult {
         }
 
         match ticket_state.unwrap() {
-            VoucherState::Claimed => {
-                Poll::Ready(Err(ClaimError::VoucherClaimedAlready))
-            },
+            VoucherState::Claimed => Poll::Ready(Err(ClaimError::VoucherClaimedAlready)),
             VoucherState::OnQueue => {
-                if let Some(_) = voucher_ctx.ticket_wakers.get(&self.voucher)
-                {
+                if let Some(_) = voucher_ctx.ticket_wakers.get(&self.voucher) {
                     Poll::Ready(Err(ClaimError::VoucherClaimedAlready))
-                }
-                else
-                {
-                    voucher_ctx.ticket_wakers.insert(self.voucher.clone(), cx.waker().clone());
+                } else {
+                    voucher_ctx
+                        .ticket_wakers
+                        .insert(self.voucher.clone(), cx.waker().clone());
                     Poll::Pending
                 }
-            },
+            }
             VoucherState::Solved(id) => {
                 // Check if within time limit
                 voucher_ctx.reservation_system.claimed_requests.insert(id);
-                if let Some((resource, _start_time)) = voucher_ctx.reservation_system.current_state.assigned.get(&id) {
+                if let Some((resource, _start_time)) = voucher_ctx
+                    .reservation_system
+                    .current_state
+                    .assigned
+                    .get(&id)
+                {
                     let res = resource.clone();
-                    voucher_ctx.ticket_state.insert(self.voucher.clone(), VoucherState::Claimed);
+                    voucher_ctx
+                        .ticket_state
+                        .insert(self.voucher.clone(), VoucherState::Claimed);
                     Poll::Ready(Ok(res))
-                }
-                else {
+                } else {
                     voucher_ctx.reservation_system.force_reservation(id);
-                    if let Some((resource, _start_time)) = voucher_ctx.reservation_system.current_state.assigned.get(&id) {
+                    if let Some((resource, _start_time)) = voucher_ctx
+                        .reservation_system
+                        .current_state
+                        .assigned
+                        .get(&id)
+                    {
                         let res = resource.clone();
-                        voucher_ctx.ticket_state.insert(self.voucher.clone(), VoucherState::Claimed);
+                        voucher_ctx
+                            .ticket_state
+                            .insert(self.voucher.clone(), VoucherState::Claimed);
                         Poll::Ready(Ok(res))
-                    }
-                    else {
+                    } else {
                         Poll::Ready(Err(ClaimError::ResourcesTooBusy))
                     }
                 }
@@ -739,7 +728,7 @@ struct VoucherContext {
     reservation_system: SyncReservationSystem,
     ticket_state: HashMap<ReservationVoucher, VoucherState>,
     ticket_wakers: HashMap<ReservationVoucher, Waker>,
-    voucher_max_idx: usize
+    voucher_max_idx: usize,
 }
 
 impl VoucherContext {
@@ -748,7 +737,7 @@ impl VoucherContext {
             reservation_system: SyncReservationSystem::create_new_with_resources(resources),
             ticket_state: HashMap::new(),
             ticket_wakers: HashMap::new(),
-            voucher_max_idx: 0
+            voucher_max_idx: 0,
         }
     }
 }
@@ -760,11 +749,10 @@ pub struct AsyncReservationSystem {
     //ticket_state: Arc<Mutex<HashMap<ReservationVoucher, VoucherState>>>,
     //ticket_wakers: Arc<Mutex<HashMap<ReservationVoucher, Waker>>>,
     resources: HashSet<String>,
-    voucher_context: Arc<Mutex<VoucherContext>>
+    voucher_context: Arc<Mutex<VoucherContext>>,
 }
 
 impl AsyncReservationSystem {
-
     pub fn new(resources: &Vec<String>) -> Self {
         Self {
             /*reservation_system: Arc::new(Mutex::new(SyncReservationSystem::create_new_with_resources(resources))),
@@ -780,44 +768,60 @@ impl AsyncReservationSystem {
                     hashset.insert(resource.clone());
                 }
                 hashset
-            }
+            },
         }
     }
 
-    pub fn request_reservation(&mut self, alternatives: Vec<ReservationRequest>) -> Result<ReservationVoucher, RequestError> {
+    pub fn request_reservation(
+        &mut self,
+        alternatives: Vec<ReservationRequest>,
+    ) -> Result<ReservationVoucher, RequestError> {
         for alternative in &alternatives {
-            if !self.resources.contains(&alternative.parameters.resource_name) {
-                return Err(RequestError::NonExistantResource(alternative.parameters.resource_name.clone()));
+            if !self
+                .resources
+                .contains(&alternative.parameters.resource_name)
+            {
+                return Err(RequestError::NonExistantResource(
+                    alternative.parameters.resource_name.clone(),
+                ));
             }
         }
 
         let mut voucher_context = self.voucher_context.lock().unwrap();
-        
+
         voucher_context.voucher_max_idx += 1;
-        let ticket = ReservationVoucher { index: voucher_context.voucher_max_idx - 1 };
-        self.work_queue.push(Action::Add(ticket.clone(), alternatives));
-        voucher_context.ticket_state.insert(ticket.clone(), VoucherState::OnQueue);
+        let ticket = ReservationVoucher {
+            index: voucher_context.voucher_max_idx - 1,
+        };
+        self.work_queue
+            .push(Action::Add(ticket.clone(), alternatives));
+        voucher_context
+            .ticket_state
+            .insert(ticket.clone(), VoucherState::OnQueue);
         Ok(ticket)
     }
 
     pub fn spin_in_bg(&self) -> JoinHandle<()> {
-        let voucher_context= self.voucher_context.clone();
+        let voucher_context = self.voucher_context.clone();
         let work_queue = self.work_queue.clone();
-        
+
         std::thread::spawn(move || {
             while let action = work_queue.wait_for_work() {
                 match action {
                     Action::Add(voucher, parameters) => {
-                        let mut ctx: std::sync::MutexGuard<VoucherContext> = voucher_context.lock().expect("Unable to lock voucher context");
+                        let mut ctx: std::sync::MutexGuard<VoucherContext> = voucher_context
+                            .lock()
+                            .expect("Unable to lock voucher context");
                         let index = ctx.reservation_system.request_reservation(parameters);
-                        ctx.ticket_state.insert(voucher.clone(), VoucherState::Solved(index));
+                        ctx.ticket_state
+                            .insert(voucher.clone(), VoucherState::Solved(index));
                         if let Some(waker) = ctx.ticket_wakers.remove(&voucher) {
                             waker.wake();
                         }
-                    },
+                    }
                     Action::Cancel(voucher) => {
                         todo!("Cancellation unsupported");
-                    },
+                    }
                     Action::Exit => {
                         break;
                     }
@@ -828,12 +832,12 @@ impl AsyncReservationSystem {
 
     /// Return relevant resource.
     pub fn claim(&self, voucher: ReservationVoucher) -> ClaimResult {
-        ClaimResult { 
-            /*reservation_system: self.reservation_system.clone(), 
-            ticket_state: self.ticket_state.clone(), 
+        ClaimResult {
+            /*reservation_system: self.reservation_system.clone(),
+            ticket_state: self.ticket_state.clone(),
             ticket_wakers: self.ticket_wakers.clone(), */
             voucher_context: self.voucher_context.clone(),
-            voucher
+            voucher,
         }
     }
 }
@@ -985,7 +989,7 @@ fn test_conflict_checker() {
                 earliest_start: None,
                 latest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 7, 10, 11).unwrap()),
             },
-            duration: Some(Duration::minutes(30))
+            duration: Some(Duration::minutes(30)),
         },
         cost_function: cost_func.clone(),
     };
@@ -1088,7 +1092,8 @@ fn test_branching_operations() {
         cost_function: Arc::new(NoCost {}),
     };
 
-    let changes = reservation_schedule.get_possible_schedule_changes(0, 0, &request, &HashSet::new());
+    let changes =
+        reservation_schedule.get_possible_schedule_changes(0, 0, &request, &HashSet::new());
     let num_removed = changes
         .iter()
         .filter(|sched_change| matches!(sched_change, SchedChange::Remove(_)))
@@ -1109,7 +1114,6 @@ fn test_branching_operations() {
         }
     }
 }
-
 
 #[cfg(test)]
 #[test]
@@ -1235,9 +1239,7 @@ fn test_async_reservation() {
     if let Ok(voucher) = voucher {
         let result = block_on(reservation_system.claim(voucher));
         assert!(matches!(result, Ok(_)));
-    }
-    else
-    {
+    } else {
         // Expect a valid reservation ticket.
         assert!(false);
     }
