@@ -12,10 +12,13 @@ use std::collections::{
 };
 use std::hash::{Hash, Hasher};
 
+use serde;
+use serde_derive::{Deserialize, Serialize};
+
 mod utils;
 
 /// Constraints on start time
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct StartTimeRange {
     /// This is the earliest start time. If None, means there is no earliest time.
     pub earliest_start: Option<DateTime<Utc>>,
@@ -23,13 +26,40 @@ pub struct StartTimeRange {
     pub latest_start: Option<DateTime<Utc>>,
 }
 
+mod duration_serialization {
+    use chrono::Duration;
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(dur: &Option<Duration>, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match dur {
+            Some(dur) => ser.serialize_i64(dur.num_milliseconds()),
+            None => ser.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserialize: D) -> Result<Option<Duration>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: Option<i64> = Option::deserialize(deserialize)?;
+        if let Some(s) = s {
+            return Ok(Some(Duration::milliseconds(s)));
+        }
+        Ok(None)
+    }
+}
 /// Reservation request parameters
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReservationParameters {
     /// Resource you want to reserve
     pub resource_name: String,
-    /// Duration of the reervation. If the duration is none, it is assumed this is an indefinite request.
+    /// Duration of the reservation. If the duration is none, it is assumed this is an indefinite request.
     /// I.E this reservation is permananent.
+    #[serde(default)]
+    #[serde(with = "duration_serialization")]
     pub duration: Option<Duration>,
     /// Start time constraints.
     pub start_time: StartTimeRange,
@@ -623,7 +653,7 @@ impl SyncReservationSystem {
     }
 }
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ReservationVoucher {
     index: usize,
 }
@@ -743,11 +773,7 @@ impl VoucherContext {
 }
 
 pub struct AsyncReservationSystem {
-    //reservation_system: Arc<Mutex<SyncReservationSystem>>,
-    //voucher_max_idx: usize,
     work_queue: Arc<utils::queue::WorkQueue<Action>>,
-    //ticket_state: Arc<Mutex<HashMap<ReservationVoucher, VoucherState>>>,
-    //ticket_wakers: Arc<Mutex<HashMap<ReservationVoucher, Waker>>>,
     resources: HashSet<String>,
     voucher_context: Arc<Mutex<VoucherContext>>,
 }
@@ -755,11 +781,6 @@ pub struct AsyncReservationSystem {
 impl AsyncReservationSystem {
     pub fn new(resources: &Vec<String>) -> Self {
         Self {
-            /*reservation_system: Arc::new(Mutex::new(SyncReservationSystem::create_new_with_resources(resources))),
-            voucher_max_idx: 0usize,
-            work_queue: Arc::new(utils::queue::WorkQueue::new()),
-            ticket_state: Arc::new(Mutex::new(HashMap::new())),
-            ticket_wakers: Arc::new(Mutex::new(HashMap::new())),*/
             voucher_context: Arc::new(Mutex::new(VoucherContext::new(resources))),
             work_queue: Arc::new(utils::queue::WorkQueue::new()),
             resources: {
@@ -805,26 +826,25 @@ impl AsyncReservationSystem {
         let voucher_context = self.voucher_context.clone();
         let work_queue = self.work_queue.clone();
 
-        std::thread::spawn(move || {
-            while let action = work_queue.wait_for_work() {
-                match action {
-                    Action::Add(voucher, parameters) => {
-                        let mut ctx: std::sync::MutexGuard<VoucherContext> = voucher_context
-                            .lock()
-                            .expect("Unable to lock voucher context");
-                        let index = ctx.reservation_system.request_reservation(parameters);
-                        ctx.ticket_state
-                            .insert(voucher.clone(), VoucherState::Solved(index));
-                        if let Some(waker) = ctx.ticket_wakers.remove(&voucher) {
-                            waker.wake();
-                        }
+        std::thread::spawn(move || loop {
+            let action = work_queue.wait_for_work();
+            match action {
+                Action::Add(voucher, parameters) => {
+                    let mut ctx: std::sync::MutexGuard<VoucherContext> = voucher_context
+                        .lock()
+                        .expect("Unable to lock voucher context");
+                    let index = ctx.reservation_system.request_reservation(parameters);
+                    ctx.ticket_state
+                        .insert(voucher.clone(), VoucherState::Solved(index));
+                    if let Some(waker) = ctx.ticket_wakers.remove(&voucher) {
+                        waker.wake();
                     }
-                    Action::Cancel(voucher) => {
-                        todo!("Cancellation unsupported");
-                    }
-                    Action::Exit => {
-                        break;
-                    }
+                }
+                Action::Cancel(voucher) => {
+                    todo!("Cancellation unsupported");
+                }
+                Action::Exit => {
+                    break;
                 }
             }
         })
@@ -833,9 +853,6 @@ impl AsyncReservationSystem {
     /// Return relevant resource.
     pub fn claim(&self, voucher: ReservationVoucher) -> ClaimResult {
         ClaimResult {
-            /*reservation_system: self.reservation_system.clone(),
-            ticket_state: self.ticket_state.clone(),
-            ticket_wakers: self.ticket_wakers.clone(), */
             voucher_context: self.voucher_context.clone(),
             voucher,
         }
