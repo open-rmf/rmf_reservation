@@ -11,12 +11,12 @@ itertools = "0.10.5"
 futures = "0.3"
 serde = "1.0.164"
 serde_derive = "1.0.164"
+uuid = { version = "1.4.0", features = ["v4", "fast-rng", "macro-diagnostics"] }
 
 [dev-dependencies]
-nannou = "0.18.1"
-nannou_egui = "0.5.0"
-axum = "0.6"
+axum = { version = "0.6", features= ["macros"]}
 hyper = { version = "0.14", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 axum-server = "0.5.1"
 serde_json = "1.0.99"
+mapf = { path = "/usr/local/google/home/arjoc/ws/mapf/mapf", features = ["serde"] }

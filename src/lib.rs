@@ -1,3 +1,4 @@
+use std::collections::BinaryHeap;
 use ::std::sync::{Arc, Mutex};
 use std::future::Future;
 use std::pin::Pin;
@@ -16,6 +17,7 @@ use serde;
 use serde_derive::{Deserialize, Serialize};
 
 mod utils;
+pub mod wait_points;
 
 /// Constraints on start time
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -126,7 +128,14 @@ impl ReservationSchedule {
             schedule: BTreeMap::new(),
         }
     }
+
+    /// Collect garbage up to time.
+    pub fn garbage_collect(&mut self, time: DateTime<Utc>) {
+        self.schedule = self.schedule.split_off(&time);
+    }
+
     /// Checks consistency
+    #[cfg(test)]
     fn check_consistency(&self) -> bool {
         let mut next_min_instant = NextInstant::Beginning;
         for (instant, assignment) in &self.schedule {
@@ -536,6 +545,7 @@ impl SyncReservationSystem {
         result
     }
 
+    /// Ignore heuristic. Use conflict as motivating heuristic
     fn search_for_solution(&self) -> Vec<(ReservationState, Vec<SchedChange>)> {
         // TODO remove HashSet. Move to view based method
         let mut explored = HashSet::new();
@@ -576,6 +586,7 @@ impl SyncReservationSystem {
         results
     }
 
+    /// Greedy approach
     fn search_for_solution_to_problem(
         &mut self,
         reservation: usize,
@@ -636,11 +647,10 @@ impl SyncReservationSystem {
             .insert(self.reservation_queue.len() - 1);
         let mut soln = self.search_for_solution();
         if soln.len() > 0 {
-            // TODO(arjo) find best solution
+            // TODO(arjo) find best solution. Currently sorts by conflicts
             soln.sort_by(|a, b| a.1.len().partial_cmp(&b.1.len()).unwrap());
 
             // Compute changes
-
             for sched_change in &soln[0].1 {
                 match sched_change {
                     SchedChange::Add(res, assignment) => {}
@@ -793,6 +803,7 @@ impl AsyncReservationSystem {
         }
     }
 
+    /// Requests a reservation
     pub fn request_reservation(
         &mut self,
         alternatives: Vec<ReservationRequest>,
@@ -822,6 +833,7 @@ impl AsyncReservationSystem {
         Ok(ticket)
     }
 
+    /// Spin the server in the background.
     pub fn spin_in_bg(&self) -> JoinHandle<()> {
         let voucher_context = self.voucher_context.clone();
         let work_queue = self.work_queue.clone();
