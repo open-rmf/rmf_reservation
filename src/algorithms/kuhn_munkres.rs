@@ -1,10 +1,85 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{collections::{HashMap, BTreeMap}, hash::Hash};
 
 use chrono::{DateTime, Utc};
 use ordered_float::OrderedFloat;
 use pathfinding::{kuhn_munkres, prelude::Weights};
 
 use crate::{ReservationParameters, ReservationRequest, StartTimeRange};
+
+struct SparseAxisMasker {
+    masked_idx_remapping: Vec<Option<usize>>,
+    len: usize
+}
+
+impl SparseAxisMasker {
+    pub fn init(num: usize) -> Self {
+        Self {
+            masked_idx_remapping: vec![None; num],
+            len: 0
+        }
+    }
+
+    pub fn len(&self) ->usize {
+        self.len
+    }
+
+    pub fn remap(&self, idx: usize) -> Result<usize, &'static str> {
+        if idx > self.masked_idx_remapping.len() {
+            return Err("Index out of bounds");
+        }
+        
+        if let Some(op) = self.masked_idx_remapping[idx] {
+            return Ok(op);
+        }
+        else {
+            return Err("Index is out of mask bounds");
+        }
+    }
+
+    pub fn clear_and_rebuild_view(&mut self, vec: &mut Vec<usize>) {
+        vec.sort();
+        let mut max_value_idx:usize = 0;
+        let mut cum_idx: usize = 0;
+        for i in 0..self.masked_idx_remapping.len() {
+
+            if max_value_idx >= vec.len() {
+                self.masked_idx_remapping[cum_idx] = Some(i);
+                cum_idx += 1;
+                continue;
+            }
+
+            if vec[max_value_idx] == i {
+                self.masked_idx_remapping[cum_idx] = Some(i);
+                max_value_idx += 1;
+                continue;
+            }
+
+            self.masked_idx_remapping[cum_idx] = Some(i);
+            cum_idx += 1;
+        }
+        self.len  = cum_idx;
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_sparse_axis_masker() {
+
+    let mut skip_indices: Vec<usize> = vec![3,8];
+    let arr: Vec<usize> = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+    let mut masker = SparseAxisMasker::init(arr.len());
+    masker.clear_and_rebuild_view(&mut skip_indices);
+    
+    let expected: Vec<_> = arr.iter().filter(|p| !skip_indices.contains(p)).map(|p| *p).collect();
+    let mut res = vec![];
+    for i in 0..masker.len() {
+        res.push(arr[masker.remap(i).unwrap()]);
+    }
+
+    assert_eq!(expected, res);
+}
+
 
 struct ReservationsKuhnMunkres {
     resources: Vec<String>,
