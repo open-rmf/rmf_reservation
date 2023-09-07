@@ -1,14 +1,12 @@
 use crate::CostFunction;
 
 pub struct StaticCost {
-    cost: f64
+    cost: f64,
 }
 
 impl StaticCost {
     pub fn new(cost: f64) -> Self {
-        Self {
-            cost
-        }
+        Self { cost }
     }
 }
 

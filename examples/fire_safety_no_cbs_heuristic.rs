@@ -1,31 +1,49 @@
 // The goal of this example is to demonstrate fire safety
 // Each robot has a seperate hypothetical spot in a single story
-// warehouse. In the backend an optimizer runs giving 
+// warehouse. In the backend an optimizer runs giving
 // the best possible assignment to each robot.
 // We compare performance between
 // with Conflict-based-search in the loop and
 // without conflict based search in the loop.
-// This uses the trivial heuristic of dijkstra to 
+// This uses the trivial heuristic of dijkstra to
 // the nearest point in the graph.
 #![feature(map_try_insert)]
-use std::{collections::{HashMap, HashSet, BTreeMap}, hash::Hash, sync::Arc, rc::Rc};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    hash::Hash,
+    rc::Rc,
+    sync::Arc,
+};
 
-use mapf::{prelude::SimpleGraph, motion::{r2::{Position, LineFollow, WaypointR2}, SpeedLimit, Trajectory}, templates::InformedSearch, Planner, prelude::{SharedGraph, AStar}};
+use mapf::{
+    motion::{
+        r2::{LineFollow, Position, WaypointR2},
+        SpeedLimit, Trajectory,
+    },
+    prelude::SimpleGraph,
+    prelude::{AStar, SharedGraph},
+    templates::InformedSearch,
+    Planner,
+};
 use ordered_float::OrderedFloat;
 use pathfinding::prelude::kuhn_munkres_min;
 use rmf_site_format::legacy::nav_graph::NavGraph;
 
 use rand::prelude::*;
-use rand_seeder::{Seeder, SipHasher};
 use rand_pcg::Pcg64;
+use rand_seeder::{Seeder, SipHasher};
 
 struct RobotPosition {
     from: usize,
     to: usize,
-    distance: f64
+    distance: f64,
 }
 
-fn seed_robots(num_robots: usize, graph: &SimpleGraph<Position, SpeedLimit>, generator: &mut Pcg64) -> Vec<RobotPosition> { 
+fn seed_robots(
+    num_robots: usize,
+    graph: &SimpleGraph<Position, SpeedLimit>,
+    generator: &mut Pcg64,
+) -> Vec<RobotPosition> {
     let mut result = vec![];
     for _ in 0..num_robots {
         let len = graph.vertices.len();
@@ -35,9 +53,7 @@ fn seed_robots(num_robots: usize, graph: &SimpleGraph<Position, SpeedLimit>, gen
         };
         let distance = generator.gen_range(0.0..=1.0);
 
-        let robot = RobotPosition {
-            from, to, distance
-        };
+        let robot = RobotPosition { from, to, distance };
         result.push(robot);
     }
     result
@@ -45,7 +61,7 @@ fn seed_robots(num_robots: usize, graph: &SimpleGraph<Position, SpeedLimit>, gen
 
 #[derive(Clone, Eq, PartialEq)]
 struct AssignmentState {
-    assignment : HashMap<usize, Vec<usize>>, // Index is parking spot. Value is robot size.
+    assignment: HashMap<usize, Vec<usize>>, // Index is parking spot. Value is robot size.
 }
 
 impl AssignmentState {
@@ -57,17 +73,18 @@ impl AssignmentState {
         }
         true
     }
-    pub fn split_by_conflicts(&self,
+    pub fn split_by_conflicts(
+        &self,
         enforced: &HashSet<(usize, usize)>,
-        parking_spots: &HashSet<usize>) -> Vec<(AssignmentState, HashSet<(usize, usize)>)> 
-    {
-
+        parking_spots: &HashSet<usize>,
+    ) -> Vec<(AssignmentState, HashSet<(usize, usize)>)> {
     }
 }
 impl std::hash::Hash for AssignmentState {
     fn hash<H>(&self, state: &mut H)
     where
-        H: std::hash::Hasher {
+        H: std::hash::Hasher,
+    {
         state.write_usize(self.assignment.len());
         for (robot, parkings) in self.assignment {
             state.write_usize(robot);
@@ -109,15 +126,18 @@ impl PartialOrd for ConstraintContainer {
 }
 
 impl ConstraintContainer {
-
-    pub fn new(cache_cell: Rc<CacheCell>, assignment: AssignmentState,  initial_positions: Rc<Vec<RobotPosition>>) -> Self {
+    pub fn new(
+        cache_cell: Rc<CacheCell>,
+        assignment: AssignmentState,
+        initial_positions: Rc<Vec<RobotPosition>>,
+    ) -> Self {
         let mut res = Self {
             cache_cell,
             assignment,
             initial_positions,
             constraints_to_change: HashSet::new(),
             constraints_to_keep_same: HashSet::new(),
-            cost: OrderedFloat(0.0)
+            cost: OrderedFloat(0.0),
         };
 
         res.cost = res.cost();
@@ -128,7 +148,10 @@ impl ConstraintContainer {
         let mut total_cost = 0.0f64;
         for robot in 0..self.assignment.assignment.len() {
             for parking in 0..self.assignment.assignment[robot] {
-                total_cost += self.cache_cell.cost_given_position(&self.initial_positions[robot], &parking_spot).0;
+                total_cost += self
+                    .cache_cell
+                    .cost_given_position(&self.initial_positions[robot], &parking_spot)
+                    .0;
             }
         }
         OrderedFloat(total_cost)
@@ -139,18 +162,20 @@ impl ConstraintContainer {
 struct CacheCell {
     path_to_index: HashMap<(usize, usize), usize>,
     cost_to_edge: HashMap<usize, Vec<(usize, OrderedFloat<f64>)>>,
-    graph: SimpleGraph<Position, SpeedLimit>
+    graph: SimpleGraph<Position, SpeedLimit>,
 }
 
 impl CacheCell {
-    fn from(cache_builder: &HashMap<usize, BTreeMap<OrderedFloat<f64>, usize>>, graph: SimpleGraph<Position, SpeedLimit>) -> Self {
-        
+    fn from(
+        cache_builder: &HashMap<usize, BTreeMap<OrderedFloat<f64>, usize>>,
+        graph: SimpleGraph<Position, SpeedLimit>,
+    ) -> Self {
         let mut res = Self {
             path_to_index: HashMap::new(),
             cost_to_edge: HashMap::new(),
-            graph
+            graph,
         };
-        
+
         for (from, costs) in cache_builder {
             let Ok(m_vec) = res.cost_to_edge.try_insert(*from, vec![]) else {
                 panic!("Spooky action at a distance");
@@ -172,16 +197,15 @@ impl CacheCell {
         let Some(cost) = self.cost_to_edge.get(from) else {
             return OrderedFloat(f64::INFINITY);
         };
-        
+
         let (_, cost) = cost[index];
         cost
     }
 
-    fn cost_given_position(&self, position: &RobotPosition, goal: &usize) -> OrderedFloat<f64>
-    {
+    fn cost_given_position(&self, position: &RobotPosition, goal: &usize) -> OrderedFloat<f64> {
         let cost_at_start = self.cost_given_index(&position.from, goal);
         let cost_at_end = self.cost_given_index(&position.to, goal);
-        
+
         let vert1 = self.graph.vertices[position.from];
         let vert2 = self.graph.vertices[position.to];
         let length = (vert1 - vert2).norm();
@@ -190,7 +214,6 @@ impl CacheCell {
         let l2 = cost_at_end + OrderedFloat(length * (1.0 - position.distance));
         l1.min(l2)
     }
-
 }
 
 fn main() -> std::io::Result<()> {
@@ -212,20 +235,21 @@ fn main() -> std::io::Result<()> {
                 parking_spots.insert(i);
             }
         }
-        let graph: SimpleGraph<Position, SpeedLimit> =
-            
-            SimpleGraph::from_iters(level.vertices.iter().map(
-            |p| Position::new(p.0.into(), p.1.into())), 
-            level.lanes.iter().map(
-                |e| (e.0, e.1, SpeedLimit(None))
-            ));
+        let graph: SimpleGraph<Position, SpeedLimit> = SimpleGraph::from_iters(
+            level
+                .vertices
+                .iter()
+                .map(|p| Position::new(p.0.into(), p.1.into())),
+            level.lanes.iter().map(|e| (e.0, e.1, SpeedLimit(None))),
+        );
 
         level_map.insert(name, graph);
     }
 
-    let mut cached_dijkstra: HashMap<String, HashMap<usize, BTreeMap<OrderedFloat<f64>, usize>>> = HashMap::new();
+    let mut cached_dijkstra: HashMap<String, HashMap<usize, BTreeMap<OrderedFloat<f64>, usize>>> =
+        HashMap::new();
     for (name, level) in &nav.levels {
-        let mut cost_function: HashMap<usize, BTreeMap<OrderedFloat<f64>,usize>> = HashMap::new();
+        let mut cost_function: HashMap<usize, BTreeMap<OrderedFloat<f64>, usize>> = HashMap::new();
 
         let planner = Planner::new(Arc::new(AStar(InformedSearch::new_r2(
             SharedGraph::new(level_map[name].clone()),
@@ -236,13 +260,17 @@ fn main() -> std::io::Result<()> {
                 if vert == *parking_spot {
                     continue;
                 }
-               
+
                 let solution = planner.plan(0usize, 8usize).unwrap().solve().unwrap();
                 match solution {
                     mapf::prelude::SearchStatus::Incomplete => continue,
                     mapf::prelude::SearchStatus::Impossible => continue,
                     mapf::prelude::SearchStatus::Solved(path) => {
-                        let traj = path.make_trajectory::<WaypointR2>().unwrap().unwrap().trajectory;
+                        let traj = path
+                            .make_trajectory::<WaypointR2>()
+                            .unwrap()
+                            .unwrap()
+                            .trajectory;
                         let Some(last) = traj.into_iter().last() else {
                             continue;
                         };
@@ -259,13 +287,11 @@ fn main() -> std::io::Result<()> {
                             continue;
                         };
                         ranked_preference.insert(OrderedFloat(score), *parking_spot);
-
-                    },
+                    }
                 }
             }
-
         }
-        
+
         cached_dijkstra.insert(name.clone(), cost_function);
     }
 

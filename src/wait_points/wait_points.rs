@@ -40,7 +40,6 @@ pub struct WaitPointSystem {
 }
 
 impl WaitPointSystem {
-
     /// Request a waitpoint
     pub fn request_waitpoint(
         &mut self,

@@ -9,10 +9,7 @@ use rmf_reservations::{
     ReservationVoucher,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    net::SocketAddr,
-    sync::{Arc},
-};
+use std::{net::SocketAddr, sync::Arc};
 
 use tokio::sync::RwLock;
 
@@ -62,7 +59,6 @@ async fn reserve_item(
             voucher,
         }));
     }
-    
 
     Json(JSONReservationResponse::Error(
         "Failed to acquire lock".to_string(),
@@ -72,17 +68,15 @@ async fn reserve_item(
 #[axum::debug_handler]
 async fn claim(
     State(reservation_system): State<Arc<RwLock<AsyncReservationSystem>>>,
-    Json(payload): Json<ReservationVoucherStamped>
+    Json(payload): Json<ReservationVoucherStamped>,
 ) -> Json<Result<String, &'static str>> {
-    let sys  = reservation_system.write().await;
+    let sys = reservation_system.write().await;
     if let Ok(location) = sys.claim(payload.voucher).await {
         Json(Ok(location))
-    }
-    else {
+    } else {
         Json(Err("Failed to claim"))
     }
 }
-
 
 #[tokio::main]
 async fn main() {
@@ -93,7 +87,7 @@ async fn main() {
     ];
 
     let mut reservation_system = Arc::new(RwLock::new(AsyncReservationSystem::new(&resources)));
-    
+
     let res_sys_thread = { reservation_system.read().await.spin_in_bg() };
 
     let app = Router::new()

@@ -1,5 +1,5 @@
-use std::collections::BinaryHeap;
 use ::std::sync::{Arc, Mutex};
+use std::collections::BinaryHeap;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
@@ -33,10 +33,10 @@ pub struct StartTimeRange {
 }
 
 impl StartTimeRange {
-    pub fn no_specifics() ->Self {
+    pub fn no_specifics() -> Self {
         Self {
             earliest_start: None,
-            latest_start: None
+            latest_start: None,
         }
     }
 }

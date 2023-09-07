@@ -1,11 +1,23 @@
-use chrono::{DateTime, Duration, Utc, Date};
-use mapf::{premade::SippSE2, prelude::{SimpleGraph, SharedGraph, AStarConnect}, motion::{se2::{Point, WaypointSE2, DifferentialDriveLineFollow, LinearTrajectorySE2}, CcbsEnvironment, DynamicEnvironment, DynamicCircularObstacle, Trajectory, TravelEffortCost, CircularProfile, trajectory}, templates::InformedSearch, Planner};
-use rmf_reservations::{AsyncReservationSystem, ReservationVoucher, RequestError, CostFunction, ReservationParameters, ReservationRequest, StartTimeRange, ClaimResult};
-use std::{sync::Arc, collections::HashMap, hash::Hash, thread::JoinHandle};
-use std::sync::mpsc::{Sender, Receiver};
+use chrono::{Date, DateTime, Duration, Utc};
+use mapf::{
+    motion::{
+        se2::{DifferentialDriveLineFollow, LinearTrajectorySE2, Point, WaypointSE2},
+        trajectory, CcbsEnvironment, CircularProfile, DynamicCircularObstacle, DynamicEnvironment,
+        Trajectory, TravelEffortCost,
+    },
+    prelude::{AStarConnect, SharedGraph, SimpleGraph},
+    premade::SippSE2,
+    templates::InformedSearch,
+    Planner,
+};
+use rmf_reservations::{
+    AsyncReservationSystem, ClaimResult, CostFunction, RequestError, ReservationParameters,
+    ReservationRequest, ReservationVoucher, StartTimeRange,
+};
 use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
-
+use std::{collections::HashMap, hash::Hash, sync::Arc, thread::JoinHandle};
 
 struct NoCost {}
 
@@ -20,15 +32,13 @@ pub struct MultiRobotScheduler {
     name_to_idx: HashMap<String, usize>,
     chargers: Vec<String>,
     charger_pos: Vec<(f64, f64)>,
-    res_sys_thread: JoinHandle<()>
+    res_sys_thread: JoinHandle<()>,
 }
 
 impl MultiRobotScheduler {
-
     fn init(num: usize) -> Self {
-
         // TODO(arjo): generate scale
-        let mut chargers: Vec<String>= vec![];
+        let mut chargers: Vec<String> = vec![];
         let mut charger_pos = vec![];
         let mut name_to_idx = HashMap::new();
 
@@ -40,24 +50,32 @@ impl MultiRobotScheduler {
         }
         let res_sys = AsyncReservationSystem::new(&chargers);
         let res_sys_thread = res_sys.spin_in_bg();
-        Self { res_sys, chargers, charger_pos, name_to_idx,
-        res_sys_thread }
+        Self {
+            res_sys,
+            chargers,
+            charger_pos,
+            name_to_idx,
+            res_sys_thread,
+        }
     }
 
-
-    fn request_charge_at(&mut self, time: DateTime<chrono::Utc>, battery_out: DateTime<chrono::Utc>, duration: Duration) -> Result<ReservationVoucher, RequestError>
-    {
-        let cost_func = Arc::new(NoCost{});
+    fn request_charge_at(
+        &mut self,
+        time: DateTime<chrono::Utc>,
+        battery_out: DateTime<chrono::Utc>,
+        duration: Duration,
+    ) -> Result<ReservationVoucher, RequestError> {
+        let cost_func = Arc::new(NoCost {});
         let chargers = self.chargers.iter().map(|charger| ReservationRequest {
             parameters: ReservationParameters {
                 resource_name: charger.clone(),
                 duration: Some(duration.clone()),
                 start_time: StartTimeRange {
                     earliest_start: Some(time),
-                    latest_start: Some(battery_out)
-                }
+                    latest_start: Some(battery_out),
+                },
             },
-            cost_function: cost_func.clone()
+            cost_function: cost_func.clone(),
         });
         self.res_sys.request_reservation(chargers.collect())
     }
@@ -73,23 +91,20 @@ impl MultiRobotScheduler {
 
         Some(self.charger_pos[*idx])
     }
-
 }
-
 
 fn diff(pt1: (f64, f64), pt2: (f64, f64)) -> (f64, f64) {
     (pt1.0 - pt2.0, pt1.1 - pt2.1)
 }
 
-fn normalize(pt1: (f64,f64)) -> (f64, f64) {
+fn normalize(pt1: (f64, f64)) -> (f64, f64) {
     let len = (pt1.0 * pt1.0 + pt1.1 * pt1.1).sqrt();
-    scale(pt1, 1.0/len)
+    scale(pt1, 1.0 / len)
 }
 
 fn scale(pt1: (f64, f64), scale_factor: f64) -> (f64, f64) {
-    (pt1.0 * scale_factor, pt1.1 *scale_factor)
+    (pt1.0 * scale_factor, pt1.1 * scale_factor)
 }
-
 
 const SPEED: f64 = 1.0;
 
@@ -97,7 +112,7 @@ enum State {
     MOVE_TOWARDS_CHARGER((f64, f64)),
     MOVE_AWAY_CHARGER,
     CHARGING(DateTime<Utc>),
-    PARKED
+    PARKED,
 }
 struct Robot {
     pos: (f64, f64),
@@ -106,11 +121,10 @@ struct Robot {
     state: State,
     last_parked: DateTime<Utc>,
     voucher: Option<ReservationVoucher>,
-    id: usize
+    id: usize,
 }
 
 impl Robot {
-
     fn init(starting_pos: &(f64, f64), id: usize) -> Self {
         Self {
             pos: starting_pos.clone(),
@@ -119,7 +133,7 @@ impl Robot {
             state: State::PARKED,
             last_parked: DateTime::<Utc>::MIN_UTC,
             voucher: None,
-            id
+            id,
         }
     }
     fn step(&mut self, dt: f64) {
@@ -127,28 +141,38 @@ impl Robot {
         self.pos.1 += self.vel.1 * dt;
     }
 
-    async fn take_decision(&mut self, robot_sched: &mut MultiRobotScheduler, current_time: DateTime<Utc>) {
+    async fn take_decision(
+        &mut self,
+        robot_sched: &mut MultiRobotScheduler,
+        current_time: DateTime<Utc>,
+    ) {
         let CHARGE_DURATION: Duration = Duration::seconds(500);
-let WORK_DURATION: Duration = Duration::seconds(500);
-let MAX_WORK_DURATION: Duration = Duration::seconds(200);
+        let WORK_DURATION: Duration = Duration::seconds(500);
+        let MAX_WORK_DURATION: Duration = Duration::seconds(200);
         match self.state {
             State::MOVE_TOWARDS_CHARGER(point) => {
                 let dx = point.0 - self.pos.0;
                 let dy = point.1 - self.pos.1;
 
-                if dx * dx + dy * dy < 0.1{
-                    println!("At time {:?} robot {:?} reaches charger at {:?}", current_time, self.id, point);
+                if dx * dx + dy * dy < 0.1 {
+                    println!(
+                        "At time {:?} robot {:?} reaches charger at {:?}",
+                        current_time, self.id, point
+                    );
                     self.state = State::CHARGING(current_time + CHARGE_DURATION);
                     self.vel = (0.0, 0.0);
-                }  
-            },
+                }
+            }
             State::CHARGING(time_to_move) => {
                 if current_time >= time_to_move {
-                    println!("At time {:?} robot {:?} moves away from charger", current_time, self.id);
+                    println!(
+                        "At time {:?} robot {:?} moves away from charger",
+                        current_time, self.id
+                    );
                     self.state = State::MOVE_AWAY_CHARGER;
                     self.vel = scale(diff(self.starting_spot, self.pos), SPEED);
                 }
-            },
+            }
             State::MOVE_AWAY_CHARGER => {
                 let dx = self.starting_spot.0 - self.pos.0;
                 let dy = self.starting_spot.1 - self.pos.1;
@@ -158,7 +182,7 @@ let MAX_WORK_DURATION: Duration = Duration::seconds(200);
                     self.vel = (0.0, 0.0);
                     self.last_parked = current_time;
                     println!("At time {:?} robot {:?} is parked", current_time, self.id);
-                   
+
                     let Ok(voucher) =
                         robot_sched.request_charge_at(
                             self.last_parked + WORK_DURATION,
@@ -169,7 +193,7 @@ let MAX_WORK_DURATION: Duration = Duration::seconds(200);
                     };
                     self.voucher = Some(voucher);
                 }
-            },
+            }
             State::PARKED => {
                 if self.voucher.is_none() {
                     let Ok(voucher) = robot_sched.request_charge_at(
@@ -202,13 +226,11 @@ let MAX_WORK_DURATION: Duration = Duration::seconds(200);
     }
 }
 
-#[tokio::main]  
-async fn main() -> Result<(), String>  {
-
-
+#[tokio::main]
+async fn main() -> Result<(), String> {
     let num_robots = 3;
     let mut scheduler = MultiRobotScheduler::init(num_robots);
-    
+
     let mut time_now = DateTime::<Utc>::MIN_UTC;
 
     let mut robots = {
@@ -216,9 +238,9 @@ async fn main() -> Result<(), String>  {
         for i in 0..num_robots {
             robot_list.push(Robot::init(&(0.0, i as f64), i));
         }
-        robot_list 
+        robot_list
     };
-    
+
     for _i in 0..10000 {
         time_now += Duration::seconds(1);
 
