@@ -19,6 +19,10 @@ use serde_derive::{Deserialize, Serialize};
 mod utils;
 pub mod wait_points;
 
+pub mod algorithms;
+
+pub mod cost_function;
+
 /// Constraints on start time
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct StartTimeRange {
@@ -26,6 +30,15 @@ pub struct StartTimeRange {
     pub earliest_start: Option<DateTime<Utc>>,
     /// This is the latest start time. If None, means there is no earliest time.
     pub latest_start: Option<DateTime<Utc>>,
+}
+
+impl StartTimeRange {
+    pub fn no_specifics() ->Self {
+        Self {
+            earliest_start: None,
+            latest_start: None
+        }
+    }
 }
 
 mod duration_serialization {
