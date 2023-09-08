@@ -3,6 +3,7 @@ use std::{collections::{HashMap, BTreeMap}, hash::Hash};
 use chrono::{DateTime, Utc};
 use ordered_float::OrderedFloat;
 use pathfinding::{kuhn_munkres, prelude::Weights};
+use term_table::{Table, table_cell::TableCell, row::Row};
 
 use crate::{ReservationParameters, ReservationRequest, StartTimeRange};
 
@@ -17,6 +18,11 @@ impl SparseAxisMasker {
             masked_idx_remapping: vec![None; num],
             len: 0
         }
+    }
+
+    pub fn grow(&mut self, num: usize) {
+        self.masked_idx_remapping.resize(
+            self.masked_idx_remapping.len() + num, None);
     }
 
     pub fn len(&self) ->usize {
@@ -38,6 +44,7 @@ impl SparseAxisMasker {
 
     pub fn clear_and_rebuild_view(&mut self, vec: &mut Vec<usize>) {
         vec.sort();
+        vec.dedup();
         let mut max_value_idx:usize = 0;
         let mut cum_idx: usize = 0;
         for i in 0..self.masked_idx_remapping.len() {
@@ -89,18 +96,29 @@ struct ReservationsKuhnMunkres {
     request_reservation_idx: HashMap<(usize, usize), usize>,
     last_request_id: usize,
     max_cost: f64,
+    pub resource_mask: SparseAxisMasker,
+    pub request_mask: SparseAxisMasker,
 }
 
 impl Weights<OrderedFloat<f64>> for ReservationsKuhnMunkres {
     fn rows(&self) -> usize {
-        self.last_request_id.max(self.requests.len())
+        self.request_mask.len()
     }
 
     fn columns(&self) -> usize {
-        self.last_request_id.max(self.resources.len())
+        self.resource_mask.len()
     }
 
     fn at(&self, row: usize, col: usize) -> OrderedFloat<f64> {
+
+        let Ok(row) = self.request_mask.remap(row) else {
+            return OrderedFloat(- self.max_cost - 1.0)
+        };
+
+        let Ok(col) = self.resource_mask.remap(col) else {
+            return OrderedFloat(- self.max_cost - 1.0)
+        };
+
         // Rows are the request that was made by the agent
         let Some(requests) = self.requests.get(&row) else {
             return OrderedFloat(- self.max_cost - 1.0);
@@ -128,7 +146,32 @@ impl Weights<OrderedFloat<f64>> for ReservationsKuhnMunkres {
 }
 
 impl ReservationsKuhnMunkres {
-    pub fn create_with_resources(resources: Vec<String>) -> Self {
+
+    fn print_debug_matrix(&self) {
+        let mut table = Table::new();
+
+        let mut header = vec![TableCell::new("Request id")];
+
+        let columns = (0..self.columns())
+        .map(|idx| self.resource_mask.remap(idx))
+        .map(|idx| self.resources[idx.unwrap()].clone())
+        .map(|resource| TableCell::new(resource)); 
+
+        header.extend(columns);
+
+        table.add_row(Row::new(header));
+
+        for row in 0..self.request_mask.len() {
+            let mut t_row = vec![TableCell::new(format!("{}",row))];
+
+            for col in 0..self.resource_mask.len() {
+                t_row.push(TableCell::new(format!("{}", self.at(row, col))));
+            }
+            table.add_row(Row::new(t_row));
+        }
+        println!("{}", table.render());
+    }
+    pub fn create_with_resources(resources: &Vec<String>) -> Self {
         Self {
             resources: resources.clone(),
             resource_name_to_id: HashMap::from_iter(
@@ -141,6 +184,8 @@ impl ReservationsKuhnMunkres {
             max_cost: 0.0,
             last_request_id: 0,
             request_reservation_idx: HashMap::new(),
+            resource_mask: SparseAxisMasker::init(resources.len()),
+            request_mask: SparseAxisMasker::init(0)
         }
     }
 
@@ -160,18 +205,20 @@ impl ReservationsKuhnMunkres {
                     .cost(&request[r_id].parameters, &DateTime::<Utc>::MIN_UTC),
             );
         }
-
+        self.last_request_id += 1;
         self.requests.insert(req_id, request);
+        self.request_mask.grow(1);
         Some(req_id)
     }
 
-    pub fn solve(&self) -> HashMap<usize, Option<usize>> {
+    pub fn solve(&mut self) -> (OrderedFloat<f64>, HashMap<usize, Option<usize>>) {
         let mut res = HashMap::new();
-        let (_, results) = kuhn_munkres::kuhn_munkres(self);
+        let mut mask = vec![];
+        self.request_mask.clear_and_rebuild_view(&mut mask);
+        self.resource_mask.clear_and_rebuild_view(&mut mask);
+
+        let (cost, results) = kuhn_munkres::kuhn_munkres(self);
         for row_idx in 0..results.len() {
-            let Some(req) = self.requests.get(&row_idx) else {
-                continue;
-            };
             let col_idx = results[row_idx];
             let Some(req_id) = self.request_reservation_idx.get(&(row_idx, col_idx)) else {
                 // Failed to allocate any valid option
@@ -181,7 +228,61 @@ impl ReservationsKuhnMunkres {
             };
             res.insert(row_idx, Some(*req_id));
         }
-        res
+        (-cost, res)
+    }
+
+    /// constraints are of the form (request_id,
+    /// constraint that should be satisfied by request)
+    /// (resource_id)
+    pub fn solve_with_constraint(&mut self,
+        positive_constraints: Vec<(usize, usize)>, removed_resources: Vec<usize>) -> (OrderedFloat<f64>, HashMap<usize, Option<usize>>) {
+            
+            let mut resource_mask = vec![];
+            let mut request_mask = vec![];
+            for (request_id, satisfied_resource) in positive_constraints {
+                if let Some(reservations) = self.requests.get(&request_id) {
+                    let Some(res) = reservations.get(satisfied_resource) else {
+                        continue;
+                    };
+                    request_mask.push(request_id);
+
+                    let Some(&res) = self.resource_name_to_id.get(&res.parameters.resource_name) else {
+                        continue;
+                    };
+                    resource_mask.push(res);
+                }
+            }
+
+            for resource in removed_resources {
+                resource_mask.push(resource);
+            }
+            
+            
+            let mut res = HashMap::new();
+            self.request_mask.clear_and_rebuild_view(&mut request_mask);
+            self.resource_mask.clear_and_rebuild_view(&mut resource_mask);
+            let (cost, results) = kuhn_munkres::kuhn_munkres(self);
+            
+            for row_idx in 0..results.len() {
+                let Some(req) = self.requests.get(&row_idx) else {
+                    continue;
+                };
+                let col_idx = results[row_idx];
+                let Ok(row_idx) = self.request_mask.remap(row_idx) else {
+                    continue;
+                };
+                let Ok(col_idx) = self.resource_mask.remap(col_idx) else {
+                    continue;
+                };
+                let Some(req_id) = self.request_reservation_idx.get(&(row_idx, col_idx)) else {
+                    // Failed to allocate any valid option
+                    // System is probably over subscribed
+                    res.insert(row_idx, None);
+                    continue;
+                };
+                res.insert(row_idx, Some(*req_id));
+            }
+            (-cost, res)
     }
 }
 
@@ -196,7 +297,7 @@ fn test_kuhn_munkres_correctness() {
         .iter()
         .map(|c| c.to_string())
         .collect();
-    let mut res_sys = ReservationsKuhnMunkres::create_with_resources(resources);
+    let mut res_sys = ReservationsKuhnMunkres::create_with_resources(&resources);
 
     let req1 = vec![
         ReservationRequest {
@@ -238,11 +339,151 @@ fn test_kuhn_munkres_correctness() {
     let idx1 = res_sys.request_resources(req1);
     let idx2 = res_sys.request_resources(req2);
 
-    let res = res_sys.solve();
+    let (cost, res) = res_sys.solve();
+
+    res_sys.print_debug_matrix();
+
+    let r1 = res[&idx1.unwrap()].unwrap();
+    let r2 = res[&idx2.unwrap()].unwrap();
+    
+    println!("cost {}", cost);
+    assert!((cost.0 - 2.0).abs() <1e-9);
+    assert_eq!(r1, 1);
+    assert_eq!(r2, 1);
+}
+
+#[cfg(test)]
+#[test]
+fn test_resource_constraint() {
+    use std::sync::Arc;
+
+    use crate::cost_function::static_cost::StaticCost;
+
+    let resources: Vec<_> = vec!["Parking Spot 1", "Parking Spot 2", "Parking Spot 3"]
+        .iter()
+        .map(|c| c.to_string())
+        .collect();
+    let mut res_sys = ReservationsKuhnMunkres::create_with_resources(&resources);
+
+    let req1 = vec![
+        ReservationRequest {
+            parameters: ReservationParameters {
+                resource_name: "Parking Spot 1".to_string(),
+                duration: None,
+                start_time: StartTimeRange::no_specifics(),
+            },
+            cost_function: Arc::new(StaticCost::new(10.0)),
+        },
+        ReservationRequest {
+            parameters: ReservationParameters {
+                resource_name: "Parking Spot 2".to_string(),
+                duration: None,
+                start_time: StartTimeRange::no_specifics(),
+            },
+            cost_function: Arc::new(StaticCost::new(1.0)),
+        },
+    ];
+    let req2 = vec![
+        ReservationRequest {
+            parameters: ReservationParameters {
+                resource_name: "Parking Spot 2".to_string(),
+                duration: None,
+                start_time: StartTimeRange::no_specifics(),
+            },
+            cost_function: Arc::new(StaticCost::new(10.0)),
+        },
+        ReservationRequest {
+            parameters: ReservationParameters {
+                resource_name: "Parking Spot 3".to_string(),
+                duration: None,
+                start_time: StartTimeRange::no_specifics(),
+            },
+            cost_function: Arc::new(StaticCost::new(1.0)),
+        },
+    ];
+
+    let idx1 = res_sys.request_resources(req1);
+    let idx2 = res_sys.request_resources(req2);
+
+    let mut removed_resources = vec![1];
+    let (cost, res) = res_sys.solve_with_constraint(vec![], removed_resources);
+
+    println!("{:?}",res);
+    res_sys.print_debug_matrix();
 
     let r1 = res[&idx1.unwrap()].unwrap();
     let r2 = res[&idx2.unwrap()].unwrap();
 
-    assert_eq!(r1, 1);
+    println!("cost {cost}");
+
+    assert_eq!(r1, 0);
+    assert_eq!(r2, 1);
+}
+
+#[cfg(test)]
+#[test]
+fn test_rquest_constraint() {
+    use std::sync::Arc;
+
+    use crate::cost_function::static_cost::StaticCost;
+
+    let resources: Vec<_> = vec!["Parking Spot 1", "Parking Spot 2", "Parking Spot 3"]
+        .iter()
+        .map(|c| c.to_string())
+        .collect();
+    let mut res_sys = ReservationsKuhnMunkres::create_with_resources(&resources);
+
+    let req1 = vec![
+        ReservationRequest {
+            parameters: ReservationParameters {
+                resource_name: "Parking Spot 1".to_string(),
+                duration: None,
+                start_time: StartTimeRange::no_specifics(),
+            },
+            cost_function: Arc::new(StaticCost::new(10.0)),
+        },
+        ReservationRequest {
+            parameters: ReservationParameters {
+                resource_name: "Parking Spot 2".to_string(),
+                duration: None,
+                start_time: StartTimeRange::no_specifics(),
+            },
+            cost_function: Arc::new(StaticCost::new(1.0)),
+        },
+    ];
+    let req2 = vec![
+        ReservationRequest {
+            parameters: ReservationParameters {
+                resource_name: "Parking Spot 2".to_string(),
+                duration: None,
+                start_time: StartTimeRange::no_specifics(),
+            },
+            cost_function: Arc::new(StaticCost::new(10.0)),
+        },
+        ReservationRequest {
+            parameters: ReservationParameters {
+                resource_name: "Parking Spot 3".to_string(),
+                duration: None,
+                start_time: StartTimeRange::no_specifics(),
+            },
+            cost_function: Arc::new(StaticCost::new(1.0)),
+        },
+    ];
+
+    let idx1 = res_sys.request_resources(req1);
+    let idx2 = res_sys.request_resources(req2);
+
+    let mut removed_resources = vec![1];
+    let (cost, res) = res_sys.solve_with_constraint(vec![], removed_resources);
+
+    println!("{:?}",res);
+    res_sys.print_debug_matrix();
+
+    let r1 = res[&idx1.unwrap()].unwrap();
+    let r2 = res[&idx2.unwrap()].unwrap();
+
+    println!("cost {cost}");
+
+    assert_eq!(r1, 0);
     assert_eq!(r2, 1);
 }
