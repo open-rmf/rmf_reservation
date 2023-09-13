@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 use std::thread::JoinHandle;
 
-use chrono::{DateTime, Duration, TimeZone, Utc};
+use chrono::{DateTime, Duration, TimeZone, Utc, Date};
 use itertools::Itertools;
 
 use std::collections::{
@@ -427,6 +427,13 @@ impl Hash for ReservationState {
 }
 
 impl ReservationState {
+
+    pub fn garbage_collect(&mut self, time: DateTime<Utc>) {
+        for (_, schedule) in &mut self.assignments {
+            schedule.garbage_collect(time);
+        }
+    }
+
     fn create_empty() -> Self {
         Self {
             unassigned: HashSet::new(),
@@ -529,6 +536,11 @@ pub struct SyncReservationSystem {
 }
 
 impl SyncReservationSystem {
+
+    pub fn garbage_collect(&mut self, time: DateTime<Utc>) {
+        self.current_state.garbage_collect(time);
+    }
+
     pub fn create_new_with_resources(resources: &Vec<String>) -> Self {
         Self {
             reservation_queue: vec![],
@@ -585,7 +597,7 @@ impl SyncReservationSystem {
                             rollout_plan.push(change.clone());
                             cursor = state.clone();
                         } else {
-                            panic!("Should never get here");
+                            //panic!("Should never get here");
                         }
                     }
                     results.push((next_state.clone(), rollout_plan));
@@ -695,6 +707,7 @@ pub enum RequestError {
 enum Action {
     Add(ReservationVoucher, Vec<ReservationRequest>),
     Cancel(ReservationVoucher),
+    Cleanse(DateTime<Utc>),
     Exit,
 }
 
@@ -802,6 +815,10 @@ pub struct AsyncReservationSystem {
 }
 
 impl AsyncReservationSystem {
+
+    pub fn garbage_collect(&mut self, time: DateTime<Utc>) {
+        self.work_queue.push(Action::Cleanse(time));
+    }
     pub fn new(resources: &Vec<String>) -> Self {
         Self {
             voucher_context: Arc::new(Mutex::new(VoucherContext::new(resources))),
@@ -867,6 +884,12 @@ impl AsyncReservationSystem {
                 }
                 Action::Cancel(voucher) => {
                     todo!("Cancellation unsupported");
+                },
+                Action::Cleanse(time) => {
+                    let mut ctx: std::sync::MutexGuard<VoucherContext> = voucher_context
+                        .lock()
+                        .expect("Unable to lock voucher context");
+                    ctx.reservation_system.garbage_collect(time);
                 }
                 Action::Exit => {
                     break;

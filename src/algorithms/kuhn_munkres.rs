@@ -87,7 +87,12 @@ fn test_sparse_axis_masker() {
     assert_eq!(expected, res);
 }
 
-
+/// The Kuhn-Munkres algorithm provides the simplest type of reservation system.
+/// In this reservation system, time is ignored,
+/// rather the best assignments between resources. An example use case for thi
+/// is in a fire emergency system where for instance robots.
+/// This class also comes with a masker that allows you to add simple constraints whild
+/// solving an optimization.
 struct ReservationsKuhnMunkres {
     resources: Vec<String>,
     resource_name_to_id: HashMap<String, usize>,
@@ -96,8 +101,8 @@ struct ReservationsKuhnMunkres {
     request_reservation_idx: HashMap<(usize, usize), usize>,
     last_request_id: usize,
     max_cost: f64,
-    pub resource_mask: SparseAxisMasker,
-    pub request_mask: SparseAxisMasker,
+    resource_mask: SparseAxisMasker,
+    request_mask: SparseAxisMasker,
 }
 
 impl Weights<OrderedFloat<f64>> for ReservationsKuhnMunkres {

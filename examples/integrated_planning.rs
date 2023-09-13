@@ -80,6 +80,10 @@ impl MultiRobotScheduler {
         self.res_sys.request_reservation(chargers.collect())
     }
 
+    fn garbage_collect(&mut self, time: DateTime<Utc>) {
+        self.res_sys.garbage_collect(time);
+    }
+
     pub fn claim(&self, voucher: ReservationVoucher) -> ClaimResult {
         self.res_sys.claim(voucher)
     }
@@ -228,7 +232,7 @@ impl Robot {
 
 #[tokio::main]
 async fn main() -> Result<(), String> {
-    let num_robots = 3;
+    let num_robots = 4;
     let mut scheduler = MultiRobotScheduler::init(num_robots);
 
     let mut time_now = DateTime::<Utc>::MIN_UTC;
@@ -242,6 +246,7 @@ async fn main() -> Result<(), String> {
     };
 
     for _i in 0..10000 {
+        //scheduler.garbage_collect(time_now);
         time_now += Duration::seconds(1);
 
         for robot in &mut robots {
