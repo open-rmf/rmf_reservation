@@ -1,3 +1,9 @@
+#![feature(btree_cursors)]
+#![feature(hasher_prefixfree_extras)]
+#![feature(test)]
+extern crate test;
+
+use std::fmt;
 use ::std::sync::{Arc, Mutex};
 use std::collections::BinaryHeap;
 use std::future::Future;
@@ -37,6 +43,13 @@ impl StartTimeRange {
         Self {
             earliest_start: None,
             latest_start: None,
+        }
+    }
+
+    pub fn exactly_at(time: &DateTime<Utc>) -> Self {
+        Self {
+            earliest_start: Some(time.clone()),
+            latest_start: Some(time.clone())
         }
     }
 }
@@ -94,6 +107,11 @@ pub struct ReservationRequest {
     /// Cost function to use
     pub cost_function: Arc<dyn CostFunction + Send + Sync>,
 }
+impl fmt::Debug for ReservationRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReservationRequest").field("parameters", &self.parameters).finish()
+    }
+}
 
 impl ReservationRequest {
     /// Check if a certain set of parameters satisfies this request
@@ -140,6 +158,10 @@ impl ReservationSchedule {
         Self {
             schedule: BTreeMap::new(),
         }
+    }
+
+    pub fn insert(&mut self, index: (usize, usize), duration: Option<Duration>, start: DateTime<Utc>) {
+        self.schedule.insert(start, Assignment(index.0, index.1, duration));
     }
 
     /// Collect garbage up to time.
