@@ -89,7 +89,7 @@ fn test_sparse_axis_masker() {
 
 /// The Kuhn-Munkres algorithm provides the simplest type of reservation system.
 /// In this reservation system, time is ignored,
-/// rather the best assignments between resources. An example use case for thi
+/// rather the best assignments between resources. An example use case for this
 /// is in a fire emergency system where for instance robots.
 /// This class also comes with a masker that allows you to add simple constraints whild
 /// solving an optimization.

@@ -55,7 +55,7 @@ impl TimeBasedBranchAndBound {
         Some(req_id)
     }
 
-    pub fn generate_literals_and_remap_requests(&self) -> SparseScheduleConflictBranchAndBound {
+    pub fn generate_literals_and_remap_requests(&self) -> SparseScheduleConflictHillClimber {
         let mut fake_resources = vec![];
         let mut fake_resource_mapping: HashMap<String, FakeResourceMetaInfo> = HashMap::new();
         let mut fake_requests: HashMap<usize, Vec<ReservationRequest>> = HashMap::new();
@@ -169,7 +169,7 @@ impl TimeBasedBranchAndBound {
             }
         }
 
-        SparseScheduleConflictBranchAndBound {
+        SparseScheduleConflictHillClimber {
             id_to_res,
             res_to_id,
             conflict_sets,
@@ -225,7 +225,9 @@ impl Ord for Solution {
 
     // Flip comparison to make binary heap a min heap
     fn cmp(&self, other: &Self) -> Ordering {
-        other.unallocated.cmp(&self.unallocated).then_with(|| other.cost.cmp(&self.cost))
+        other.unallocated.cmp(&self.unallocated)
+            .then_with(|| other.cost.cmp(&self.cost))
+            .then_with(|| other.conflicts.len().cmp(&self.conflicts.len()))
     }
 }
 
@@ -237,11 +239,11 @@ impl PartialOrd for Solution {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StarvationGroup {
-    group: HashSet<(usize, usize), FnvBuildHasher>
+    positive: HashSet<(usize, usize), FnvBuildHasher>,
 }
 impl Hash for StarvationGroup {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        for (k,v) in &self.group {
+        for (k,v) in &self.positive {
             state.write_usize(*k);
             state.write_usize(*v);
         }
@@ -249,14 +251,14 @@ impl Hash for StarvationGroup {
 }
 
 #[derive(Debug)]
-pub struct SparseScheduleConflictBranchAndBound {
+pub struct SparseScheduleConflictHillClimber {
     res_to_id: HashMap<String, (usize, usize)>,
     id_to_res: HashMap<(usize, usize), String>,
     conflict_sets: HashMap<String, HashSet<String>>,
     fake_requests: HashMap<usize, Vec<ReservationRequest>>,
 }
 
-impl SparseScheduleConflictBranchAndBound {
+impl SparseScheduleConflictHillClimber {
     pub fn debug_print(&self) {
         for (req_id, alts) in &self.fake_requests{
             for alt in alts {
@@ -265,12 +267,16 @@ impl SparseScheduleConflictBranchAndBound {
         }
     }
 
+    pub fn literals(&self) -> HashMap<usize, usize> {
+        self.fake_requests.iter().map(|(k,v)| (*k, v.len())).collect()
+    } 
+
     fn backtrack(&self, assignments: &mut Vec<Option<usize>>, solution: &Solution, implications: &UniqueMultiHashMap<(usize, usize), String>, backtracker: &UniqueMultiHashMap<String, (usize, usize)>, starvation_sets: &mut HashSet<StarvationGroup>) -> Solution {
         
         let mut positive_constraints  = solution.positive_constraints.clone();
         let mut backtrack = vec![];
         for group in &solution.starvation_groups_found {
-            for (k, v) in &group.group {
+            for (k, v) in &group.positive {
                 let Some(v2) = positive_constraints.get(k) else {
                     continue;
                 };
@@ -292,6 +298,17 @@ impl SparseScheduleConflictBranchAndBound {
             negative_constraints.insert(id.clone());
         }
         self.greedy_allocate(assignments, positive_constraints, negative_constraints, implications, backtracker, starvation_sets)
+    }
+
+    pub(crate)fn score_cache(&self) -> HashMap<(usize, usize), f64> {
+        let mut hashmap = HashMap::new();
+        for (req_id, res) in &self.fake_requests {
+            for res_id in  0..res.len() {
+                let instant = res[res_id].parameters.start_time.earliest_start.unwrap();
+                hashmap.insert((*req_id, res_id), res[res_id].cost_function.cost(&res[res_id].parameters, &instant));
+            }
+        }
+        hashmap
     }
 
     fn greedy_allocate(&self,
@@ -344,8 +361,8 @@ impl SparseScheduleConflictBranchAndBound {
                 }
 
                 println!("Got starvation group {:?}", starvation_group);
-                starvation_sets.insert(StarvationGroup{ group: starvation_group.clone()});
-                starvation_groups_found.push(StarvationGroup{ group: starvation_group.clone()});
+                starvation_sets.insert(StarvationGroup{ positive: starvation_group.clone()});
+                starvation_groups_found.push(StarvationGroup{ positive: starvation_group.clone()});
 
                 unallocated += 1;
                 continue;
@@ -364,6 +381,18 @@ impl SparseScheduleConflictBranchAndBound {
             conflicts: self.get_conflicts(&assignments, implications),
             starvation_groups_found
         }
+    }
+
+    pub fn get_banned_reservation_combinations(&self) -> UniqueMultiHashMap<(usize, usize), (usize, usize)> {
+       let (implications, _) = self.get_implications();
+       let mut final_implications = UniqueMultiHashMap::new();
+       
+       for (index, imp) in implications.iter() {
+            for i in imp {
+                final_implications.insert(*index, self.res_to_id[i]);
+            }
+       }
+       final_implications
     }
 
     /// Get implied banned stuff
@@ -394,7 +423,8 @@ impl SparseScheduleConflictBranchAndBound {
     fn get_conflicts(&self, allocations: &Vec<Option<usize>>, implications: &UniqueMultiHashMap<(usize, usize), String>) -> HashSet<(usize, usize)>{
         let mut conflicts = HashSet::new();
 
-        for req_id1 in 0..allocations.len() {
+        // O(n^2) run time. TODO(arjo) : reduce
+        /*for req_id1 in 0..allocations.len() {
             let Some(alt_id1) = allocations[req_id1] else {
                 continue;
             };
@@ -416,21 +446,41 @@ impl SparseScheduleConflictBranchAndBound {
                     conflicts.insert((req_id2, alt_id2));
                 }
             }
+        }*/
+
+        let mut seen = HashSet::new();
+        for req_id1 in 0..allocations.len() {
+            let Some(alt_id1) = allocations[req_id1] else {
+                continue;
+            };
+            let res_name = &self.id_to_res[&(req_id1, alt_id1)];
+            let Some(imp1) = self.conflict_sets.get(res_name) else {
+                continue;
+            };
+
+            for q in imp1.intersection(&seen) {
+                conflicts.insert((req_id1, alt_id1));
+                conflicts.insert(self.res_to_id[q]);
+            } 
+            
+            seen.insert(res_name.clone());
         }
 
         conflicts
     }
 
     /// Check conflict by remapping timelines
-    pub fn solve(&self) -> Option<(Solution, Vec<Option<usize>>)> {
+    pub fn solve(&self, hint: HashMap<usize, usize, FnvBuildHasher>,) -> Option<(Solution, Vec<Option<usize>>)> {
         let mut assignments =vec![None; self.fake_requests.len()];
 
         let mut explored = HashSet::new();
         let mut starvation_sets = HashSet::new();
         
         let (implications, backtracker) = self.get_implications();
-        let solution =
-            self.greedy_allocate(&mut assignments, fnv::FnvHashMap::default(), fnv::FnvHashSet::default(), &implications, &backtracker, &mut starvation_sets);
+        
+        let mut solution =
+            self.greedy_allocate(&mut assignments, hint, fnv::FnvHashSet::default(), &implications, &backtracker, &mut starvation_sets);
+        solution.positive_constraints.clear();
         
         for (given, disallowed) in implications.iter() {
             println!("Given {:?} => Not allowed {:?}", given, disallowed);
@@ -463,11 +513,11 @@ impl SparseScheduleConflictBranchAndBound {
                 positive_constraints.insert(req_id, alt);
 
                 // Check starvation sets
-                let starved: bool = {
+               /* let starved: bool = {
                     let mut val = false;
                     for starvation_group in &starvation_sets {
                         let mut hashset = FnvHashSet::from_iter(positive_constraints.iter().map(|(k,v)| (*k, *v)));
-                        if hashset.intersection(&starvation_group.group).count() == starvation_group.group.len() {
+                        if hashset.intersection(&starvation_group.positive).count() == starvation_group.positive.len() {
                             val =true;
                         }
                     }
@@ -476,7 +526,7 @@ impl SparseScheduleConflictBranchAndBound {
                 if starved {
                     println!("Dropping solution cause it will starve resources");
                     continue;
-                }
+                }*/
 
                 if let Some(banned_resources) = implications.get(&(req_id, alt)) {
                     negative_constraints.extend(banned_resources.iter().filter(|&p| self.res_to_id[p] != (req_id, alt)).map(|p| p.clone()));
@@ -496,11 +546,11 @@ impl SparseScheduleConflictBranchAndBound {
 
                         println!("Back-tracking to {:?}", new_soln);
                         if new_soln.conflicts.len() == 0 && new_soln.unallocated == 0 {
-                            return Some((solution.clone(), assignments));
+                            return Some((new_soln.clone(), assignments));
                         }
 
                         if !explored.contains(&new_soln) {
-                            priority_queue.push(new_soln.clone());
+                            //priority_queue.push(new_soln.clone());
                             explored.insert(new_soln);
                         }
                     }
@@ -523,6 +573,7 @@ impl SparseScheduleConflictBranchAndBound {
 fn test_conflict_checker() {
     use std::sync::Arc;
     use chrono::{TimeZone, Duration};
+    use fnv::FnvHashMap;
 
     use crate::{ReservationParameters, StartTimeRange, cost_function::static_cost::StaticCost};
 
@@ -577,7 +628,8 @@ fn test_conflict_checker() {
     let solver = system.generate_literals_and_remap_requests();
     //println!("Generated literals");
     solver.debug_print();
-    let (solution, _) = solver.solve().unwrap();
+    let (solution, _) = solver.solve(FnvHashMap::default()).unwrap();
+    println!("{:?}", solution);
     assert!((solution.cost.0 - 8.0).abs() < 1.0);
 }
 
@@ -663,6 +715,8 @@ use test::Bencher;
 #[cfg(test)]
 #[test]
 fn test_generation() {
+    use fnv::FnvHashMap;
+
     let (requests, resources) =  generate_test_scenario_with_known_best(4, 4, 3);
     //println!("Requests {:?}", requests);
     
@@ -673,7 +727,7 @@ fn test_generation() {
    // b.bench(|_| {
         let soln = system.generate_literals_and_remap_requests();
         soln.debug_print();
-        let _ = soln.solve().unwrap();
+        let _ = soln.solve(FnvHashMap::default()).unwrap();
        // Ok(())
     //});
 }
