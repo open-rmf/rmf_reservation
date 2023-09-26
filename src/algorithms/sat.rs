@@ -272,7 +272,7 @@ impl SATSolver {
             //println!("Assumptions being explored: {:?}", assumptions);
 
             for assumption in &assumptions.assumptions {
-                solver.assume(assumption);
+                solver.add_clause(assumption);
             }
             
             let Ok(k) = solver.solve() else {
@@ -333,6 +333,8 @@ impl SATSolver {
                             let Some(v) = var_list.get(&(req,i)) else {
                                 continue;
                             };
+
+                            println!("Adding {:?} {:?}", req, i);
 
                             new_clause.push(v.lit(true));
                         }
@@ -465,7 +467,7 @@ fn test_sat() {
 
     use super::hierarchical_kuhn_munkres::TimeBasedBranchAndBound;
 
-    let (requests, resources) = generate_sat_devil(5,3);
+    let (requests, resources) = generate_sat_devil(10,3);
     
     // generate_test_scenario_with_known_best(10, 15, 40);
     //println!("Requests {:?}", requests);
@@ -477,5 +479,8 @@ fn test_sat() {
     let soln = system.generate_literals_and_remap_requests();
     
     
+    
+    SATSolver::from_hill_climber_with_optimality_proof(soln.clone());
     SATSolver::from_hill_climber(soln);
+
 }

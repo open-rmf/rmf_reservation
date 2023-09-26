@@ -250,7 +250,7 @@ impl Hash for StarvationGroup {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SparseScheduleConflictHillClimber {
     res_to_id: HashMap<String, (usize, usize)>,
     id_to_res: HashMap<(usize, usize), String>,
