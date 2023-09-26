@@ -633,7 +633,7 @@ fn test_conflict_checker() {
     assert!((solution.cost.0 - 8.0).abs() < 1.0);
 }
 
-
+// TODO(arjo) there is bug in this that generates rubbish occassionally.
 pub fn generate_test_scenario_with_known_best(num_resources: usize, max_requests_per_resource: usize, num_conflicts: usize) -> (Vec<Vec<ReservationRequest>>, Vec<String>) {
 
     let resources = Vec::from_iter(

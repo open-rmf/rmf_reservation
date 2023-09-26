@@ -130,6 +130,29 @@ impl ReservationRequest {
 
         duration == self.parameters.duration
     }
+
+    pub fn can_be_scheduled_after(&self, alternative: &ReservationParameters) -> bool {
+        if let Some(alt) = alternative.start_time.latest_start {
+            if let Some(dur) = self.parameters.duration {
+                let Some(earliest_start) = self.parameters.start_time.earliest_start else {
+                    return true;
+                };
+                let earliest_end_time =  earliest_start + dur;
+                earliest_end_time < alt
+            }
+            else {
+                false
+            }
+        }
+        else {
+            if let Some(_) = self.parameters.duration {
+                true
+            }
+            else {
+                false
+            }
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Hash, Eq)]
