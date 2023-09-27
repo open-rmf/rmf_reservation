@@ -3,16 +3,16 @@ use std::io::Write;
 use std::{fs::OpenOptions, time::SystemTime};
 
 use fnv::FnvHashMap;
-use rmf_reservations::algorithms::hierarchical_kuhn_munkres::{
+use rmf_reservations::algorithms::greedy_solver::{
     generate_test_scenario_with_known_best, TimeBasedBranchAndBound,
 };
 use rmf_reservations::algorithms::sat::SATSolver;
 
 fn main() {
-    for x in 4..16 {
+    for x in 7..16 {
         for _ in 0..100 {
             let (requests, resources) = //generate_sat_devil(5,3);
-        generate_test_scenario_with_known_best(x, x, 5);
+        generate_test_scenario_with_known_best(5, 10, x);
             //println!("Requests {:?}", requests);
 
             let mut system = TimeBasedBranchAndBound::create_with_resources(&resources);

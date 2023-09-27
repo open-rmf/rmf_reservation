@@ -13,7 +13,7 @@ use crate::{
     ReservationRequest,
 };
 
-use super::hierarchical_kuhn_munkres::SparseScheduleConflictHillClimber;
+use super::greedy_solver::SparseScheduleConflictHillClimber;
 
 #[derive(Eq, PartialEq)]
 struct AssumptionsHash {
@@ -463,9 +463,9 @@ fn test_sat() {
 
     use fnv::FnvHashMap;
 
-    use crate::algorithms::hierarchical_kuhn_munkres::generate_test_scenario_with_known_best;
+    use crate::algorithms::greedy_solver::generate_test_scenario_with_known_best;
 
-    use super::hierarchical_kuhn_munkres::TimeBasedBranchAndBound;
+    use super::greedy_solver::TimeBasedBranchAndBound;
 
     let (requests, resources) = //generate_sat_devil(5,3);
         generate_test_scenario_with_known_best(10, 10, 5);
