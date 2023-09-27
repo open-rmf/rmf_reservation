@@ -1,2 +1,2 @@
-pub mod queue;
 pub mod multimap;
+pub mod queue;

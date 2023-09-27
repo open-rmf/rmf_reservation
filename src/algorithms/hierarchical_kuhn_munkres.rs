@@ -1,12 +1,21 @@
 use core::panic;
-use std::{collections::{HashMap, BTreeMap, HashSet, BinaryHeap}, hash::{Hash, self}, cmp::Ordering, sync::Arc, ops::Bound};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BinaryHeap, HashMap, HashSet},
+    hash::{self, Hash},
+    ops::Bound,
+    sync::Arc,
+};
 
-use chrono::{DateTime, Utc, TimeZone, Duration};
+use chrono::{DateTime, Duration, TimeZone, Utc};
 use fnv::{FnvBuildHasher, FnvHashSet};
 use ordered_float::OrderedFloat;
 use rand::Rng;
 
-use crate::{ReservationRequest, utils::multimap::UniqueMultiHashMap, cost_function::static_cost::StaticCost, ReservationSchedule};
+use crate::{
+    cost_function::static_cost::StaticCost, utils::multimap::UniqueMultiHashMap,
+    ReservationRequest, ReservationSchedule,
+};
 
 struct FakeResourceMetaInfo {
     original_resource_name: String,
@@ -60,34 +69,38 @@ impl TimeBasedBranchAndBound {
         let mut fake_resource_mapping: HashMap<String, FakeResourceMetaInfo> = HashMap::new();
         let mut fake_requests: HashMap<usize, Vec<ReservationRequest>> = HashMap::new();
 
-
         let mut id_to_res = HashMap::new();
         let mut res_to_id = HashMap::new();
 
         // HashMap<Resources, BTReeMAp<StartTime, Vec<(Req_id, alt_id, fake_resource_name, end_time)>>>
-        let mut start_time_per_resource: HashMap<String, BTreeMap<DateTime<Utc>, Vec<(usize, usize, String, DateTime<Utc>)>>> = HashMap::new();
+        let mut start_time_per_resource: HashMap<
+            String,
+            BTreeMap<DateTime<Utc>, Vec<(usize, usize, String, DateTime<Utc>)>>,
+        > = HashMap::new();
 
         for (req_id, requests) in &self.requests {
             let mut curr_req_alt = vec![];
             for i in 0..requests.len() {
-                let request =  &requests[i];
+                let request = &requests[i];
                 let resource_id = self.resource_name_to_id[&request.parameters.resource_name];
-                
+
                 // Generate new resource names
                 let res_name = format!("{} {} {}", resource_id, req_id, i);
                 id_to_res.insert((*req_id, i), res_name.clone());
                 res_to_id.insert(res_name.clone(), (*req_id, i));
                 fake_resources.push(res_name.clone());
-                fake_resource_mapping.insert(res_name.clone(), FakeResourceMetaInfo {
-                    original_resource_name: request.parameters.resource_name.clone(),
-                    original_resource_id: resource_id,
-                    original_request: (*req_id, i),
-                });
+                fake_resource_mapping.insert(
+                    res_name.clone(),
+                    FakeResourceMetaInfo {
+                        original_resource_name: request.parameters.resource_name.clone(),
+                        original_resource_id: resource_id,
+                        original_request: (*req_id, i),
+                    },
+                );
 
                 let mut fake_req = request.clone();
                 fake_req.parameters.resource_name = res_name.clone();
                 curr_req_alt.push(fake_req);
-
 
                 // Build trees for calculating conflict
                 // Note: we assume there is a well defined earliest start and that
@@ -97,19 +110,24 @@ impl TimeBasedBranchAndBound {
                 // We also assume that all reservation requests come with a duration
                 let end = start + request.parameters.duration.unwrap();
 
-                if let Some(mut schedule ) = start_time_per_resource.get_mut(&request.parameters.resource_name) {
+                if let Some(mut schedule) =
+                    start_time_per_resource.get_mut(&request.parameters.resource_name)
+                {
                     if let Some(mut bucket) = schedule.get_mut(&start) {
                         bucket.push((*req_id, i, res_name.clone(), end.clone()));
+                    } else {
+                        schedule.insert(
+                            start.clone(),
+                            vec![(*req_id, i, res_name.clone(), end.clone())],
+                        );
                     }
-                    else{
-                        schedule.insert(start.clone(), vec![(*req_id, i, res_name.clone(), end.clone())]);
-                    }
-                }
-                else {
+                } else {
                     let mut btree = BTreeMap::new();
-                    btree.insert(start.clone(), vec![(*req_id, i, res_name.clone(), end.clone())]);
-                    start_time_per_resource.insert(request.parameters.resource_name.clone()
-                        , btree);
+                    btree.insert(
+                        start.clone(),
+                        vec![(*req_id, i, res_name.clone(), end.clone())],
+                    );
+                    start_time_per_resource.insert(request.parameters.resource_name.clone(), btree);
                 };
             }
             fake_requests.insert(*req_id, curr_req_alt);
@@ -124,7 +142,6 @@ impl TimeBasedBranchAndBound {
 
             for (start_time, reservation) in start_sched {
                 for (req_id, alt_id, res_name, end) in reservation {
-                    
                     let mut conflicts = HashSet::new();
 
                     // We also assume that all reservation requests come with a duration
@@ -132,12 +149,13 @@ impl TimeBasedBranchAndBound {
                         if other_start_time > end {
                             break;
                         }
-                        
-                        for (other_req_id, other_alt_id, other_res_name, other_end) in reservations {
+
+                        for (other_req_id, other_alt_id, other_res_name, other_end) in reservations
+                        {
                             if other_res_name == res_name {
                                 continue;
                             }
-                            
+
                             // Case 1: Reservation starts during the current request in qn
                             if other_start_time >= start_time && other_start_time <= end {
                                 conflicts.insert(other_res_name.clone());
@@ -149,20 +167,21 @@ impl TimeBasedBranchAndBound {
                             }
                         }
                     }
-                    
+
                     for other_resource in &conflicts {
                         if let Some(mut conflict_set) = conflict_sets.get_mut(other_resource) {
                             conflict_set.insert(res_name.clone());
-                        }
-                        else {
-                            conflict_sets.insert(other_resource.clone(), HashSet::from_iter([res_name.clone()]));
+                        } else {
+                            conflict_sets.insert(
+                                other_resource.clone(),
+                                HashSet::from_iter([res_name.clone()]),
+                            );
                         }
                     }
 
                     if let Some(mut conflict_set) = conflict_sets.get_mut(res_name) {
                         conflict_set.extend(conflicts.iter().map(|p| p.clone()));
-                    }
-                    else {
+                    } else {
                         conflict_sets.insert(res_name.clone(), conflicts);
                     }
                 }
@@ -180,8 +199,8 @@ impl TimeBasedBranchAndBound {
 
 #[derive(Debug, Eq, PartialEq)]
 struct ConstraintList {
-    positive_constraints: HashMap<usize, usize>, 
-    negative_constraints: HashSet<String>
+    positive_constraints: HashMap<usize, usize>,
+    negative_constraints: HashSet<String>,
 }
 
 impl Hash for ConstraintList {
@@ -201,16 +220,16 @@ pub struct Solution {
     //assignments: HashMap<usize, usize>,
     cost: OrderedFloat<f64>,
     unallocated: usize,
-    positive_constraints: HashMap<usize, usize, FnvBuildHasher>, 
+    positive_constraints: HashMap<usize, usize, FnvBuildHasher>,
     negative_constraints: HashSet<String, FnvBuildHasher>,
     conflicts: HashSet<(usize, usize)>,
-    starvation_groups_found: Vec<StarvationGroup>
+    starvation_groups_found: Vec<StarvationGroup>,
 }
 
 impl Hash for Solution {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         state.write_usize(self.unallocated);
-        for (k,v) in &self.positive_constraints {
+        for (k, v) in &self.positive_constraints {
             state.write_usize(*k);
             state.write_usize(*v);
         }
@@ -222,10 +241,11 @@ impl Hash for Solution {
 }
 
 impl Ord for Solution {
-
     // Flip comparison to make binary heap a min heap
     fn cmp(&self, other: &Self) -> Ordering {
-        other.unallocated.cmp(&self.unallocated)
+        other
+            .unallocated
+            .cmp(&self.unallocated)
             .then_with(|| other.cost.cmp(&self.cost))
             .then_with(|| other.conflicts.len().cmp(&self.conflicts.len()))
     }
@@ -243,7 +263,7 @@ pub struct StarvationGroup {
 }
 impl Hash for StarvationGroup {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        for (k,v) in &self.positive {
+        for (k, v) in &self.positive {
             state.write_usize(*k);
             state.write_usize(*v);
         }
@@ -260,20 +280,36 @@ pub struct SparseScheduleConflictHillClimber {
 
 impl SparseScheduleConflictHillClimber {
     pub fn debug_print(&self) {
-        for (req_id, alts) in &self.fake_requests{
+        for (req_id, alts) in &self.fake_requests {
             for alt in alts {
-                println!("{:?} {:?} {:?}  For {:?}", req_id, alt.parameters.resource_name, alt.parameters.start_time.earliest_start, alt.parameters.start_time.earliest_start.unwrap() + alt.parameters.duration.unwrap());
+                println!(
+                    "{:?} {:?} {:?}  For {:?}",
+                    req_id,
+                    alt.parameters.resource_name,
+                    alt.parameters.start_time.earliest_start,
+                    alt.parameters.start_time.earliest_start.unwrap()
+                        + alt.parameters.duration.unwrap()
+                );
             }
         }
     }
 
     pub fn literals(&self) -> HashMap<usize, usize> {
-        self.fake_requests.iter().map(|(k,v)| (*k, v.len())).collect()
-    } 
+        self.fake_requests
+            .iter()
+            .map(|(k, v)| (*k, v.len()))
+            .collect()
+    }
 
-    fn backtrack(&self, assignments: &mut Vec<Option<usize>>, solution: &Solution, implications: &UniqueMultiHashMap<(usize, usize), String>, backtracker: &UniqueMultiHashMap<String, (usize, usize)>, starvation_sets: &mut HashSet<StarvationGroup>) -> Solution {
-        
-        let mut positive_constraints  = solution.positive_constraints.clone();
+    fn backtrack(
+        &self,
+        assignments: &mut Vec<Option<usize>>,
+        solution: &Solution,
+        implications: &UniqueMultiHashMap<(usize, usize), String>,
+        backtracker: &UniqueMultiHashMap<String, (usize, usize)>,
+        starvation_sets: &mut HashSet<StarvationGroup>,
+    ) -> Solution {
+        let mut positive_constraints = solution.positive_constraints.clone();
         let mut backtrack = vec![];
         for group in &solution.starvation_groups_found {
             for (k, v) in &group.positive {
@@ -282,43 +318,60 @@ impl SparseScheduleConflictHillClimber {
                 };
                 if *v == *v2 {
                     positive_constraints.remove(&k);
-                    backtrack.push((*k,*v));
+                    backtrack.push((*k, *v));
                 }
             }
         }
-        let mut negative_constraints: HashSet<_, FnvBuildHasher> = positive_constraints.iter().map(|(k,v)| 
-         {
-            let mut constraints = vec![];
-            if let Some(imp) = implications.get(&(*k, *v)) {
-                constraints.extend(imp.iter().map(|v| v.clone()))
-            }
-            constraints}).flatten().collect();
+        let mut negative_constraints: HashSet<_, FnvBuildHasher> = positive_constraints
+            .iter()
+            .map(|(k, v)| {
+                let mut constraints = vec![];
+                if let Some(imp) = implications.get(&(*k, *v)) {
+                    constraints.extend(imp.iter().map(|v| v.clone()))
+                }
+                constraints
+            })
+            .flatten()
+            .collect();
         for bt in backtrack {
             let id = &self.id_to_res[&bt];
             negative_constraints.insert(id.clone());
         }
-        self.greedy_allocate(assignments, positive_constraints, negative_constraints, implications, backtracker, starvation_sets)
+        self.greedy_allocate(
+            assignments,
+            positive_constraints,
+            negative_constraints,
+            implications,
+            backtracker,
+            starvation_sets,
+        )
     }
 
-    pub(crate)fn score_cache(&self) -> HashMap<(usize, usize), f64> {
+    pub(crate) fn score_cache(&self) -> HashMap<(usize, usize), f64> {
         let mut hashmap = HashMap::new();
         for (req_id, res) in &self.fake_requests {
-            for res_id in  0..res.len() {
+            for res_id in 0..res.len() {
                 let instant = res[res_id].parameters.start_time.earliest_start.unwrap();
-                hashmap.insert((*req_id, res_id), res[res_id].cost_function.cost(&res[res_id].parameters, &instant));
+                hashmap.insert(
+                    (*req_id, res_id),
+                    res[res_id]
+                        .cost_function
+                        .cost(&res[res_id].parameters, &instant),
+                );
             }
         }
         hashmap
     }
 
-    fn greedy_allocate(&self,
-        assignments: &mut Vec<Option<usize>>, 
-        positive_constraints: HashMap<usize, usize, FnvBuildHasher>, 
+    fn greedy_allocate(
+        &self,
+        assignments: &mut Vec<Option<usize>>,
+        positive_constraints: HashMap<usize, usize, FnvBuildHasher>,
         negative_constraints: HashSet<String, FnvBuildHasher>,
         implications: &UniqueMultiHashMap<(usize, usize), String>,
         backtracker: &UniqueMultiHashMap<String, (usize, usize)>,
-        starvation_sets: &mut HashSet<StarvationGroup>) -> Solution {
-        
+        starvation_sets: &mut HashSet<StarvationGroup>,
+    ) -> Solution {
         let mut total_score = 0.0;
         let mut unallocated = 0usize;
         let mut starvation_groups_found = vec![];
@@ -326,17 +379,21 @@ impl SparseScheduleConflictHillClimber {
             if let Some(alt) = positive_constraints.get(&req_id) {
                 assignments[*req_id] = Some(*alt);
                 let req = &res[*alt];
-                total_score += req.cost_function.cost(&req.parameters, 
-                    &req.parameters.start_time.earliest_start.unwrap());
+                total_score += req.cost_function.cost(
+                    &req.parameters,
+                    &req.parameters.start_time.earliest_start.unwrap(),
+                );
                 continue;
             }
 
             let mut min_score = f64::INFINITY;
             let mut selected_alt = None;
-            for alt in  0..res.len() {
+            for alt in 0..res.len() {
                 let req = &res[alt];
-                let score = req.cost_function.cost(&req.parameters, 
-                    &req.parameters.start_time.earliest_start.unwrap());
+                let score = req.cost_function.cost(
+                    &req.parameters,
+                    &req.parameters.start_time.earliest_start.unwrap(),
+                );
                 let resource = res[alt].parameters.resource_name.clone();
                 if negative_constraints.contains(&resource) {
                     assignments[*req_id] = None;
@@ -373,54 +430,65 @@ impl SparseScheduleConflictHillClimber {
         }
 
         Solution {
-            //assignments, 
-            cost: OrderedFloat(total_score), 
+            //assignments,
+            cost: OrderedFloat(total_score),
             unallocated,
             positive_constraints,
             negative_constraints,
             conflicts: self.get_conflicts(&assignments, implications),
-            starvation_groups_found
+            starvation_groups_found,
         }
     }
 
-    pub fn get_banned_reservation_combinations(&self) -> UniqueMultiHashMap<(usize, usize), (usize, usize)> {
-       let (implications, _) = self.get_implications();
-       let mut final_implications = UniqueMultiHashMap::new();
-       
-       for (index, imp) in implications.iter() {
+    pub fn get_banned_reservation_combinations(
+        &self,
+    ) -> UniqueMultiHashMap<(usize, usize), (usize, usize)> {
+        let (implications, _) = self.get_implications();
+        let mut final_implications = UniqueMultiHashMap::new();
+
+        for (index, imp) in implications.iter() {
             for i in imp {
                 final_implications.insert(*index, self.res_to_id[i]);
             }
-       }
-       final_implications
+        }
+        final_implications
     }
 
     /// Get implied banned stuff
-    fn get_implications(&self) -> (UniqueMultiHashMap<(usize, usize), String>, UniqueMultiHashMap<String, (usize,usize)>) {
+    fn get_implications(
+        &self,
+    ) -> (
+        UniqueMultiHashMap<(usize, usize), String>,
+        UniqueMultiHashMap<String, (usize, usize)>,
+    ) {
         // Contains a  bunch of banned allocations
         // <Contenting allocation, resources_to_ban>
         let mut banned_allocations = UniqueMultiHashMap::new();
         let mut backtrace = UniqueMultiHashMap::new();
-        
+
         for (req_id, alt) in &self.fake_requests {
             for alt_id in 0..alt.len() {
                 let fake_req = &self.fake_requests[req_id][alt_id];
-                if let Some(conflicts) = self.conflict_sets.get(&fake_req.parameters.resource_name) {
+                if let Some(conflicts) = self.conflict_sets.get(&fake_req.parameters.resource_name)
+                {
                     for conflict in conflicts {
                         banned_allocations.insert((*req_id, alt_id), conflict.clone());
                         backtrace.insert(conflict.clone(), (*req_id, alt_id));
                     }
                 }
-                banned_allocations.insert((*req_id, alt_id), fake_req.parameters.resource_name.clone());
+                banned_allocations
+                    .insert((*req_id, alt_id), fake_req.parameters.resource_name.clone());
                 backtrace.insert(fake_req.parameters.resource_name.clone(), (*req_id, alt_id));
             }
         }
         (banned_allocations, backtrace)
     }
 
-
-
-    fn get_conflicts(&self, allocations: &Vec<Option<usize>>, implications: &UniqueMultiHashMap<(usize, usize), String>) -> HashSet<(usize, usize)>{
+    fn get_conflicts(
+        &self,
+        allocations: &Vec<Option<usize>>,
+        implications: &UniqueMultiHashMap<(usize, usize), String>,
+    ) -> HashSet<(usize, usize)> {
         let mut conflicts = HashSet::new();
 
         // O(n^2) run time. TODO(arjo) : reduce
@@ -431,7 +499,7 @@ impl SparseScheduleConflictHillClimber {
             let Some(imp1) = implications.get(&(req_id1, alt_id1)) else {
                 continue;
             };
-            
+
             for req_id2 in 0..allocations.len() {
                 let Some(alt_id2) = allocations[req_id2] else {
                     continue;
@@ -461,8 +529,8 @@ impl SparseScheduleConflictHillClimber {
             for q in imp1.intersection(&seen) {
                 conflicts.insert((req_id1, alt_id1));
                 conflicts.insert(self.res_to_id[q]);
-            } 
-            
+            }
+
             seen.insert(res_name.clone());
         }
 
@@ -470,50 +538,69 @@ impl SparseScheduleConflictHillClimber {
     }
 
     /// Check conflict by remapping timelines
-    pub fn solve(&self, hint: HashMap<usize, usize, FnvBuildHasher>,) -> Option<(Solution, Vec<Option<usize>>)> {
-        let mut assignments =vec![None; self.fake_requests.len()];
+    pub fn solve(
+        &self,
+        hint: HashMap<usize, usize, FnvBuildHasher>,
+    ) -> Option<(Solution, Vec<Option<usize>>)> {
+        let mut assignments = vec![None; self.fake_requests.len()];
 
         let mut explored = HashSet::new();
         let mut starvation_sets = HashSet::new();
-        
+
         let (implications, backtracker) = self.get_implications();
-        
-        let mut solution =
-            self.greedy_allocate(&mut assignments, hint, fnv::FnvHashSet::default(), &implications, &backtracker, &mut starvation_sets);
+
+        let mut solution = self.greedy_allocate(
+            &mut assignments,
+            hint,
+            fnv::FnvHashSet::default(),
+            &implications,
+            &backtracker,
+            &mut starvation_sets,
+        );
         solution.positive_constraints.clear();
-        
+
         for (given, disallowed) in implications.iter() {
             println!("Given {:?} => Not allowed {:?}", given, disallowed);
         }
 
-        println!("Starting with: {:?}", solution); 
+        println!("Starting with: {:?}", solution);
         let mut priority_queue = BinaryHeap::new();
         priority_queue.push(solution);
 
         while let Some(solution) = priority_queue.pop() {
-            
             if solution.conflicts.len() == 0 && solution.unallocated == 0 {
-                let solution = self.greedy_allocate(&mut assignments, solution.positive_constraints, solution.negative_constraints, &implications, &backtracker, &mut starvation_sets);
+                let solution = self.greedy_allocate(
+                    &mut assignments,
+                    solution.positive_constraints,
+                    solution.negative_constraints,
+                    &implications,
+                    &backtracker,
+                    &mut starvation_sets,
+                );
                 return Some((solution.clone(), assignments));
             }
 
-            let options = solution.conflicts.iter().map(|&(req_id, alt)| {
-                let mut pt = HashSet::new();
-                if let Some(x)  = implications.get(&(req_id, alt)) {
-                  pt.extend(x.iter())
-                }
-                pt 
-            }).flatten().map(|f| self.res_to_id[f]);
+            let options = solution
+                .conflicts
+                .iter()
+                .map(|&(req_id, alt)| {
+                    let mut pt = HashSet::new();
+                    if let Some(x) = implications.get(&(req_id, alt)) {
+                        pt.extend(x.iter())
+                    }
+                    pt
+                })
+                .flatten()
+                .map(|f| self.res_to_id[f]);
 
             for (req_id, alt) in options {
                 let mut positive_constraints = solution.positive_constraints.clone();
                 let mut negative_constraints = solution.negative_constraints.clone();
-                
-                
+
                 positive_constraints.insert(req_id, alt);
 
                 // Check starvation sets
-               /* let starved: bool = {
+                /* let starved: bool = {
                     let mut val = false;
                     for starvation_group in &starvation_sets {
                         let mut hashset = FnvHashSet::from_iter(positive_constraints.iter().map(|(k,v)| (*k, *v)));
@@ -529,20 +616,36 @@ impl SparseScheduleConflictHillClimber {
                 }*/
 
                 if let Some(banned_resources) = implications.get(&(req_id, alt)) {
-                    negative_constraints.extend(banned_resources.iter().filter(|&p| self.res_to_id[p] != (req_id, alt)).map(|p| p.clone()));
-
+                    negative_constraints.extend(
+                        banned_resources
+                            .iter()
+                            .filter(|&p| self.res_to_id[p] != (req_id, alt))
+                            .map(|p| p.clone()),
+                    );
                 }
-                
-                let solution = self.greedy_allocate(&mut assignments,positive_constraints, negative_constraints, &implications, &backtracker, &mut starvation_sets);
+
+                let solution = self.greedy_allocate(
+                    &mut assignments,
+                    positive_constraints,
+                    negative_constraints,
+                    &implications,
+                    &backtracker,
+                    &mut starvation_sets,
+                );
                 if !explored.contains(&solution) && solution.unallocated == 0 {
                     println!("Adding solution {:?}", solution);
                     priority_queue.push(solution.clone());
-                }
-                else {
+                } else {
                     if solution.unallocated > 0 {
                         println!("Got unallocated {:?}", solution);
 
-                        let new_soln = self.backtrack(&mut  assignments, &solution, &implications, &backtracker, &mut starvation_sets);
+                        let new_soln = self.backtrack(
+                            &mut assignments,
+                            &solution,
+                            &implications,
+                            &backtracker,
+                            &mut starvation_sets,
+                        );
 
                         println!("Back-tracking to {:?}", new_soln);
                         if new_soln.conflicts.len() == 0 && new_soln.unallocated == 0 {
@@ -567,16 +670,14 @@ impl SparseScheduleConflictHillClimber {
     }
 }
 
-
 #[cfg(test)]
 #[test]
 fn test_conflict_checker() {
-    use std::sync::Arc;
-    use chrono::{TimeZone, Duration};
+    use chrono::{Duration, TimeZone};
     use fnv::FnvHashMap;
+    use std::sync::Arc;
 
-    use crate::{ReservationParameters, StartTimeRange, cost_function::static_cost::StaticCost};
-
+    use crate::{cost_function::static_cost::StaticCost, ReservationParameters, StartTimeRange};
 
     let resources = vec!["station1".to_string(), "station2".to_string()];
     let alternative1 = ReservationRequest {
@@ -603,7 +704,6 @@ fn test_conflict_checker() {
         cost_function: Arc::new(StaticCost::new(6.0)),
     };
 
-
     let alternative1_cheaper = ReservationRequest {
         parameters: ReservationParameters {
             resource_name: resources[0].clone(),
@@ -615,7 +715,6 @@ fn test_conflict_checker() {
         },
         cost_function: Arc::new(StaticCost::new(2.0)),
     };
-
 
     let req1 = vec![alternative1, alternative2];
     let req2 = vec![alternative1_cheaper];
@@ -634,12 +733,14 @@ fn test_conflict_checker() {
 }
 
 // TODO(arjo) there is bug in this that generates rubbish occassionally.
-pub fn generate_test_scenario_with_known_best(num_resources: usize, max_requests_per_resource: usize, num_conflicts: usize) -> (Vec<Vec<ReservationRequest>>, Vec<String>) {
-
-    let resources = Vec::from_iter(
-        (0..num_resources).map(|m| format!("Station {}", m)));
+pub fn generate_test_scenario_with_known_best(
+    num_resources: usize,
+    max_requests_per_resource: usize,
+    num_conflicts: usize,
+) -> (Vec<Vec<ReservationRequest>>, Vec<String>) {
+    let resources = Vec::from_iter((0..num_resources).map(|m| format!("Station {}", m)));
     let mut rng = rand::thread_rng();
-    
+
     let mut results_vec = vec![];
 
     let mut reservations_schedule = HashMap::new();
@@ -654,15 +755,21 @@ pub fn generate_test_scenario_with_known_best(num_resources: usize, max_requests
             last_start_time += Duration::minutes(rng.gen_range(0..60));
             let duration = Duration::minutes(rng.gen_range(20..90));
             let request = ReservationRequest {
-                parameters: crate::ReservationParameters { 
-                    resource_name: res.clone(), duration: Some(duration), start_time: crate::StartTimeRange { earliest_start: Some(last_start_time), latest_start:  Some(last_start_time)} },
-                    cost_function: Arc::new(StaticCost::new(1.0))
+                parameters: crate::ReservationParameters {
+                    resource_name: res.clone(),
+                    duration: Some(duration),
+                    start_time: crate::StartTimeRange {
+                        earliest_start: Some(last_start_time),
+                        latest_start: Some(last_start_time),
+                    },
+                },
+                cost_function: Arc::new(StaticCost::new(1.0)),
             };
 
             let Some(schedule )= reservations_schedule.get_mut(res) else {
                 panic!("Should never get here");
             };
-            schedule.insert((i,0), Some(duration), last_start_time);
+            schedule.insert((i, 0), Some(duration), last_start_time);
             last_start_time += duration;
 
             results_vec.push(vec![request]);
@@ -681,19 +788,23 @@ pub fn generate_test_scenario_with_known_best(num_resources: usize, max_requests
             continue;
         }
 
-        let res_id = if schedule.schedule.len() > 1 {rng.gen_range(1..schedule.schedule.len())} else {1};
+        let res_id = if schedule.schedule.len() > 1 {
+            rng.gen_range(1..schedule.schedule.len())
+        } else {
+            1
+        };
         let mut idx = 0;
         let mut prev_time = *schedule.schedule.first_key_value().unwrap().0;
-        for s  in &schedule.schedule {
+        for s in &schedule.schedule {
             if idx == res_id {
                 // Lets create a reservation to disrupt the previous two reservations
                 let req = ReservationRequest {
                     parameters: crate::ReservationParameters {
-                        resource_name: resource_name.clone(), 
-                        duration: Some((*s.0 + s.1.2.unwrap()) - prev_time), 
-                        start_time: crate::StartTimeRange::exactly_at(&prev_time)
+                        resource_name: resource_name.clone(),
+                        duration: Some((*s.0 + s.1 .2.unwrap()) - prev_time),
+                        start_time: crate::StartTimeRange::exactly_at(&prev_time),
                     },
-                    cost_function: Arc::new(StaticCost::new(0.9))
+                    cost_function: Arc::new(StaticCost::new(0.9)),
                 };
                 let rn = rng.gen_range(0..results_vec.len());
                 results_vec[rn].push(req);
@@ -706,9 +817,7 @@ pub fn generate_test_scenario_with_known_best(num_resources: usize, max_requests
     (results_vec, resources)
 }
 
-fn validate_optimal_solution(soln: &(Vec<Vec<ReservationRequest>>, Vec<String>)) {
-
-}
+fn validate_optimal_solution(soln: &(Vec<Vec<ReservationRequest>>, Vec<String>)) {}
 
 #[cfg(test)]
 use test::Bencher;
@@ -717,17 +826,17 @@ use test::Bencher;
 fn test_generation() {
     use fnv::FnvHashMap;
 
-    let (requests, resources) =  generate_test_scenario_with_known_best(4, 4, 3);
+    let (requests, resources) = generate_test_scenario_with_known_best(4, 4, 3);
     //println!("Requests {:?}", requests);
-    
+
     let mut system = TimeBasedBranchAndBound::create_with_resources(&resources);
     for req in requests {
         system.request_resources(req);
     }
-   // b.bench(|_| {
-        let soln = system.generate_literals_and_remap_requests();
-        soln.debug_print();
-        let _ = soln.solve(FnvHashMap::default()).unwrap();
-       // Ok(())
+    // b.bench(|_| {
+    let soln = system.generate_literals_and_remap_requests();
+    soln.debug_print();
+    let _ = soln.solve(FnvHashMap::default()).unwrap();
+    // Ok(())
     //});
 }

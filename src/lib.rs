@@ -3,15 +3,15 @@
 #![feature(test)]
 extern crate test;
 
-use std::fmt;
 use ::std::sync::{Arc, Mutex};
 use std::collections::BinaryHeap;
+use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 use std::thread::JoinHandle;
 
-use chrono::{DateTime, Duration, TimeZone, Utc, Date};
+use chrono::{Date, DateTime, Duration, TimeZone, Utc};
 use itertools::Itertools;
 
 use std::collections::{
@@ -49,7 +49,7 @@ impl StartTimeRange {
     pub fn exactly_at(time: &DateTime<Utc>) -> Self {
         Self {
             earliest_start: Some(time.clone()),
-            latest_start: Some(time.clone())
+            latest_start: Some(time.clone()),
         }
     }
 }
@@ -109,7 +109,9 @@ pub struct ReservationRequest {
 }
 impl fmt::Debug for ReservationRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ReservationRequest").field("parameters", &self.parameters).finish()
+        f.debug_struct("ReservationRequest")
+            .field("parameters", &self.parameters)
+            .finish()
     }
 }
 
@@ -137,18 +139,15 @@ impl ReservationRequest {
                 let Some(earliest_start) = self.parameters.start_time.earliest_start else {
                     return true;
                 };
-                let earliest_end_time =  earliest_start + dur;
+                let earliest_end_time = earliest_start + dur;
                 earliest_end_time < alt
-            }
-            else {
+            } else {
                 false
             }
-        }
-        else {
+        } else {
             if let Some(_) = self.parameters.duration {
                 true
-            }
-            else {
+            } else {
                 false
             }
         }
@@ -183,8 +182,14 @@ impl ReservationSchedule {
         }
     }
 
-    pub fn insert(&mut self, index: (usize, usize), duration: Option<Duration>, start: DateTime<Utc>) {
-        self.schedule.insert(start, Assignment(index.0, index.1, duration));
+    pub fn insert(
+        &mut self,
+        index: (usize, usize),
+        duration: Option<Duration>,
+        start: DateTime<Utc>,
+    ) {
+        self.schedule
+            .insert(start, Assignment(index.0, index.1, duration));
     }
 
     /// Collect garbage up to time.
@@ -472,7 +477,6 @@ impl Hash for ReservationState {
 }
 
 impl ReservationState {
-
     pub fn garbage_collect(&mut self, time: DateTime<Utc>) {
         for (_, schedule) in &mut self.assignments {
             schedule.garbage_collect(time);
@@ -581,7 +585,6 @@ pub struct SyncReservationSystem {
 }
 
 impl SyncReservationSystem {
-
     pub fn garbage_collect(&mut self, time: DateTime<Utc>) {
         self.current_state.garbage_collect(time);
     }
@@ -860,7 +863,6 @@ pub struct AsyncReservationSystem {
 }
 
 impl AsyncReservationSystem {
-
     pub fn garbage_collect(&mut self, time: DateTime<Utc>) {
         self.work_queue.push(Action::Cleanse(time));
     }
@@ -929,7 +931,7 @@ impl AsyncReservationSystem {
                 }
                 Action::Cancel(voucher) => {
                     todo!("Cancellation unsupported");
-                },
+                }
                 Action::Cleanse(time) => {
                     let mut ctx: std::sync::MutexGuard<VoucherContext> = voucher_context
                         .lock()

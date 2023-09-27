@@ -1,31 +1,34 @@
-use std::{collections::{HashMap, BTreeMap}, hash::Hash};
+use std::{
+    collections::{BTreeMap, HashMap},
+    hash::Hash,
+};
 
 use chrono::{DateTime, Utc};
 use ordered_float::OrderedFloat;
 use pathfinding::{kuhn_munkres, prelude::Weights};
-use term_table::{Table, table_cell::TableCell, row::Row};
+use term_table::{row::Row, table_cell::TableCell, Table};
 
 use crate::{ReservationParameters, ReservationRequest, StartTimeRange};
 
 struct SparseAxisMasker {
     masked_idx_remapping: Vec<Option<usize>>,
-    len: usize
+    len: usize,
 }
 
 impl SparseAxisMasker {
     pub fn init(num: usize) -> Self {
         Self {
             masked_idx_remapping: vec![None; num],
-            len: 0
+            len: 0,
         }
     }
 
     pub fn grow(&mut self, num: usize) {
-        self.masked_idx_remapping.resize(
-            self.masked_idx_remapping.len() + num, None);
+        self.masked_idx_remapping
+            .resize(self.masked_idx_remapping.len() + num, None);
     }
 
-    pub fn len(&self) ->usize {
+    pub fn len(&self) -> usize {
         self.len
     }
 
@@ -33,11 +36,10 @@ impl SparseAxisMasker {
         if idx > self.masked_idx_remapping.len() {
             return Err("Index out of bounds");
         }
-        
+
         if let Some(op) = self.masked_idx_remapping[idx] {
             return Ok(op);
-        }
-        else {
+        } else {
             return Err("Index is out of mask bounds");
         }
     }
@@ -45,10 +47,9 @@ impl SparseAxisMasker {
     pub fn clear_and_rebuild_view(&mut self, vec: &mut Vec<usize>) {
         vec.sort();
         vec.dedup();
-        let mut max_value_idx:usize = 0;
+        let mut max_value_idx: usize = 0;
         let mut cum_idx: usize = 0;
         for i in 0..self.masked_idx_remapping.len() {
-
             if max_value_idx >= vec.len() {
                 self.masked_idx_remapping[cum_idx] = Some(i);
                 cum_idx += 1;
@@ -64,21 +65,24 @@ impl SparseAxisMasker {
             self.masked_idx_remapping[cum_idx] = Some(i);
             cum_idx += 1;
         }
-        self.len  = cum_idx;
+        self.len = cum_idx;
     }
 }
 
 #[cfg(test)]
 #[test]
 fn test_sparse_axis_masker() {
-
-    let mut skip_indices: Vec<usize> = vec![3,8];
+    let mut skip_indices: Vec<usize> = vec![3, 8];
     let arr: Vec<usize> = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
     let mut masker = SparseAxisMasker::init(arr.len());
     masker.clear_and_rebuild_view(&mut skip_indices);
-    
-    let expected: Vec<_> = arr.iter().filter(|p| !skip_indices.contains(p)).map(|p| *p).collect();
+
+    let expected: Vec<_> = arr
+        .iter()
+        .filter(|p| !skip_indices.contains(p))
+        .map(|p| *p)
+        .collect();
     let mut res = vec![];
     for i in 0..masker.len() {
         res.push(arr[masker.remap(i).unwrap()]);
@@ -115,7 +119,6 @@ impl Weights<OrderedFloat<f64>> for ReservationsKuhnMunkres {
     }
 
     fn at(&self, row: usize, col: usize) -> OrderedFloat<f64> {
-
         let Ok(row) = self.request_mask.remap(row) else {
             return OrderedFloat(- self.max_cost - 1.0)
         };
@@ -151,23 +154,22 @@ impl Weights<OrderedFloat<f64>> for ReservationsKuhnMunkres {
 }
 
 impl ReservationsKuhnMunkres {
-
     fn print_debug_matrix(&self) {
         let mut table = Table::new();
 
         let mut header = vec![TableCell::new("Request id")];
 
         let columns = (0..self.columns())
-        .map(|idx| self.resource_mask.remap(idx))
-        .map(|idx| self.resources[idx.unwrap()].clone())
-        .map(|resource| TableCell::new(resource)); 
+            .map(|idx| self.resource_mask.remap(idx))
+            .map(|idx| self.resources[idx.unwrap()].clone())
+            .map(|resource| TableCell::new(resource));
 
         header.extend(columns);
 
         table.add_row(Row::new(header));
 
         for row in 0..self.request_mask.len() {
-            let mut t_row = vec![TableCell::new(format!("{}",row))];
+            let mut t_row = vec![TableCell::new(format!("{}", row))];
 
             for col in 0..self.resource_mask.len() {
                 t_row.push(TableCell::new(format!("{}", self.at(row, col))));
@@ -190,7 +192,7 @@ impl ReservationsKuhnMunkres {
             last_request_id: 0,
             request_reservation_idx: HashMap::new(),
             resource_mask: SparseAxisMasker::init(resources.len()),
-            request_mask: SparseAxisMasker::init(0)
+            request_mask: SparseAxisMasker::init(0),
         }
     }
 
@@ -239,55 +241,57 @@ impl ReservationsKuhnMunkres {
     /// constraints are of the form (request_id,
     /// constraint that should be satisfied by request)
     /// (resource_id)
-    pub fn solve_with_constraint(&mut self,
-        positive_constraints: Vec<(usize, usize)>, removed_resources: Vec<usize>) -> (OrderedFloat<f64>, HashMap<usize, Option<usize>>) {
-            
-            let mut resource_mask = vec![];
-            let mut request_mask = vec![];
-            for (request_id, satisfied_resource) in positive_constraints {
-                if let Some(reservations) = self.requests.get(&request_id) {
-                    let Some(res) = reservations.get(satisfied_resource) else {
+    pub fn solve_with_constraint(
+        &mut self,
+        positive_constraints: Vec<(usize, usize)>,
+        removed_resources: Vec<usize>,
+    ) -> (OrderedFloat<f64>, HashMap<usize, Option<usize>>) {
+        let mut resource_mask = vec![];
+        let mut request_mask = vec![];
+        for (request_id, satisfied_resource) in positive_constraints {
+            if let Some(reservations) = self.requests.get(&request_id) {
+                let Some(res) = reservations.get(satisfied_resource) else {
                         continue;
                     };
-                    request_mask.push(request_id);
+                request_mask.push(request_id);
 
-                    let Some(&res) = self.resource_name_to_id.get(&res.parameters.resource_name) else {
+                let Some(&res) = self.resource_name_to_id.get(&res.parameters.resource_name) else {
                         continue;
                     };
-                    resource_mask.push(res);
-                }
+                resource_mask.push(res);
             }
+        }
 
-            for resource in removed_resources {
-                resource_mask.push(resource);
-            }
-            
-            
-            let mut res = HashMap::new();
-            self.request_mask.clear_and_rebuild_view(&mut request_mask);
-            self.resource_mask.clear_and_rebuild_view(&mut resource_mask);
-            let (cost, results) = kuhn_munkres::kuhn_munkres(self);
-            
-            for row_idx in 0..results.len() {
-                let Some(req) = self.requests.get(&row_idx) else {
+        for resource in removed_resources {
+            resource_mask.push(resource);
+        }
+
+        let mut res = HashMap::new();
+        self.request_mask.clear_and_rebuild_view(&mut request_mask);
+        self.resource_mask
+            .clear_and_rebuild_view(&mut resource_mask);
+        let (cost, results) = kuhn_munkres::kuhn_munkres(self);
+
+        for row_idx in 0..results.len() {
+            let Some(req) = self.requests.get(&row_idx) else {
                     continue;
                 };
-                let col_idx = results[row_idx];
-                let Ok(row_idx) = self.request_mask.remap(row_idx) else {
+            let col_idx = results[row_idx];
+            let Ok(row_idx) = self.request_mask.remap(row_idx) else {
                     continue;
                 };
-                let Ok(col_idx) = self.resource_mask.remap(col_idx) else {
+            let Ok(col_idx) = self.resource_mask.remap(col_idx) else {
                     continue;
                 };
-                let Some(req_id) = self.request_reservation_idx.get(&(row_idx, col_idx)) else {
+            let Some(req_id) = self.request_reservation_idx.get(&(row_idx, col_idx)) else {
                     // Failed to allocate any valid option
                     // System is probably over subscribed
                     res.insert(row_idx, None);
                     continue;
                 };
-                res.insert(row_idx, Some(*req_id));
-            }
-            (-cost, res)
+            res.insert(row_idx, Some(*req_id));
+        }
+        (-cost, res)
     }
 }
 
@@ -350,9 +354,9 @@ fn test_kuhn_munkres_correctness() {
 
     let r1 = res[&idx1.unwrap()].unwrap();
     let r2 = res[&idx2.unwrap()].unwrap();
-    
+
     println!("cost {}", cost);
-    assert!((cost.0 - 2.0).abs() <1e-9);
+    assert!((cost.0 - 2.0).abs() < 1e-9);
     assert_eq!(r1, 1);
     assert_eq!(r2, 1);
 }
@@ -413,7 +417,7 @@ fn test_resource_constraint() {
     let mut removed_resources = vec![1];
     let (cost, res) = res_sys.solve_with_constraint(vec![], removed_resources);
 
-    println!("{:?}",res);
+    println!("{:?}", res);
     res_sys.print_debug_matrix();
 
     let r1 = res[&idx1.unwrap()].unwrap();
@@ -481,7 +485,7 @@ fn test_rquest_constraint() {
     let mut removed_resources = vec![1];
     let (cost, res) = res_sys.solve_with_constraint(vec![], removed_resources);
 
-    println!("{:?}",res);
+    println!("{:?}", res);
     res_sys.print_debug_matrix();
 
     let r1 = res[&idx1.unwrap()].unwrap();
