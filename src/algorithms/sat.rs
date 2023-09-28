@@ -430,7 +430,7 @@ impl SATSolver {
     }*/
 }
 
-fn generate_sat_devil(
+pub fn generate_sat_devil(
     n_resources: usize,
     n_alt: usize,
 ) -> (Vec<Vec<ReservationRequest>>, Vec<String>) {
