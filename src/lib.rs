@@ -31,6 +31,8 @@ pub mod cost_function;
 
 pub mod scenario_generation;
 
+pub mod discretization;
+
 /// Constraints on start time
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct StartTimeRange {

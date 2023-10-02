@@ -193,7 +193,7 @@ impl SATSolver {
     }
 
     //================================================================================================================================================
-    // TODO(arjo) implement optimality proof
+    // This method is the most reliable
     pub fn from_hill_climber_with_optimality_proof(problem: SparseScheduleConflictHillClimber) {
         let conflicts = problem.get_banned_reservation_combinations();
         let score_cache = problem.score_cache();
@@ -288,6 +288,7 @@ impl SATSolver {
             let mut score = 0.0;
             let mut solution = HashMap::new();
 
+            // TODO(arjo): Handle dynamic cost functions, possibly nested optimization or via LP
             for lit in model {
                 if !lit.is_positive() {
                     continue;
