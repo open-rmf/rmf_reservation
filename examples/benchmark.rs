@@ -3,9 +3,7 @@ use std::io::Write;
 use std::{fs::OpenOptions, time::SystemTime};
 
 use fnv::FnvHashMap;
-use rmf_reservations::algorithms::greedy_solver::{
-    generate_test_scenario_with_known_best, TimeBasedBranchAndBound,
-};
+use rmf_reservations::algorithms::greedy_solver::{ ConflictTracker};
 use rmf_reservations::algorithms::sat::{SATSolver, generate_sat_devil};
 
 fn main() {
@@ -15,7 +13,7 @@ fn main() {
         //generate_test_scenario_with_known_best(5, 10, x);
             //println!("Requests {:?}", requests);
 
-            let mut system = TimeBasedBranchAndBound::create_with_resources(&resources);
+            let mut system = ConflictTracker::create_with_resources(&resources);
             for req in requests {
                 system.request_resources(req);
             }

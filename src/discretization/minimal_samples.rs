@@ -31,13 +31,14 @@ impl Hash for Trail {
     }
 }
 
-fn find_options_within_resource(
+/*fn find_options_within_resource(
     earliest_start: DateTime<Utc>,
     requests: &Vec<Vec<crate::ReservationRequest>>,
-    resource_maps: &HashSet<(usize, usize)>) {
+    resource_maps: &HashSet<(usize, usize)>) -> UniqueMultiHashMap<(usize, usize), DateTime<Utc>> {
     
     //let mut explored = HashSet::new();
     let mut stack = vec![];
+    let mut result = UniqueMultiHashMap::new();
 
     for &(req_id, alt_id) in resource_maps {
         let request = requests[req_id][alt_id];
@@ -57,10 +58,31 @@ fn find_options_within_resource(
                 continue;
             }
 
+            let mut new_sched = schedule.clone();
+            
+            let Some((time, assignment)) = new_sched.order.schedule.last_key_value() else {
+                continue;
+            };
+
+            let Some(duration) = assignment.2 else {
+                continue;
+            };
+
+            let potential_start_time = *time + duration;
+
+
+           // new_sched.order.schedule.insert(key, value);
+            new_sched.explored_options.insert((req_id, alt_id));
             num_added += 1;
         }
+
+        if num_added == 0 {
+            // This is a final solution
+            //result.insert(key, value)
+        }
     }
-}
+    result
+}*/
 
 impl DescretizationStrategy for MinimalSamples {
     fn discretize(&mut self, requests: &Vec<Vec<crate::ReservationRequest>>) -> Vec<Vec<crate::ReservationRequest>> {

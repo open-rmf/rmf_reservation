@@ -33,6 +33,8 @@ pub mod scenario_generation;
 
 pub mod discretization;
 
+pub mod database;
+
 /// Constraints on start time
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct StartTimeRange {

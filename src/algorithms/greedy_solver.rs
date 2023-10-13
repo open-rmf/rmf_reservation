@@ -4,11 +4,12 @@ use std::{
     collections::{BTreeMap, BinaryHeap, HashMap, HashSet},
     hash::{self, Hash},
     ops::Bound,
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
 };
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use fnv::{FnvBuildHasher, FnvHashSet};
+use fnv::{FnvBuildHasher, FnvHashSet, FnvHashMap};
+use mapf::prelude::Algorithm;
 use ordered_float::OrderedFloat;
 use rand::Rng;
 
@@ -17,13 +18,15 @@ use crate::{
     ReservationRequest, ReservationSchedule,
 };
 
+use super::SolverAlgorithm;
+
 struct FakeResourceMetaInfo {
     original_resource_name: String,
     original_resource_id: usize,
     original_request: (usize, usize),
 }
 
-pub struct TimeBasedBranchAndBound {
+pub struct ConflictTracker {
     base_resources: Vec<String>,
     last_request_id: usize,
     resource_name_to_id: HashMap<String, usize>,
@@ -32,7 +35,7 @@ pub struct TimeBasedBranchAndBound {
     request_reservation_idx: HashMap<(usize, usize), usize>,
 }
 
-impl TimeBasedBranchAndBound {
+impl ConflictTracker {
     pub fn create_with_resources(resources: &Vec<String>) -> Self {
         Self {
             base_resources: resources.clone(),
@@ -64,7 +67,7 @@ impl TimeBasedBranchAndBound {
         Some(req_id)
     }
 
-    pub fn generate_literals_and_remap_requests(&self) -> SparseScheduleConflictHillClimber {
+    pub fn generate_literals_and_remap_requests(&self) -> Problem {
         let mut fake_resources = vec![];
         let mut fake_resource_mapping: HashMap<String, FakeResourceMetaInfo> = HashMap::new();
         let mut fake_requests: HashMap<usize, Vec<ReservationRequest>> = HashMap::new();
@@ -102,7 +105,7 @@ impl TimeBasedBranchAndBound {
                 fake_req.parameters.resource_name = res_name.clone();
                 curr_req_alt.push(fake_req);
 
-                // Build trees for calculating conflict
+                // Identify conflict
                 // Note: we assume there is a well defined earliest start and that
                 // start is the start time.
                 let start = request.parameters.start_time.earliest_start.unwrap();
@@ -110,6 +113,7 @@ impl TimeBasedBranchAndBound {
                 // We also assume that all reservation requests come with a duration
                 let end = start + request.parameters.duration.unwrap();
 
+                // Populate the schedule. Useful for conflict checking later
                 if let Some(mut schedule) =
                     start_time_per_resource.get_mut(&request.parameters.resource_name)
                 {
@@ -188,7 +192,7 @@ impl TimeBasedBranchAndBound {
             }
         }
 
-        SparseScheduleConflictHillClimber {
+        Problem {
             id_to_res,
             res_to_id,
             conflict_sets,
@@ -271,14 +275,18 @@ impl Hash for StarvationGroup {
 }
 
 #[derive(Debug, Clone)]
-pub struct SparseScheduleConflictHillClimber {
+pub struct Problem {
     res_to_id: HashMap<String, (usize, usize)>,
     id_to_res: HashMap<(usize, usize), String>,
     conflict_sets: HashMap<String, HashSet<String>>,
     fake_requests: HashMap<usize, Vec<ReservationRequest>>,
 }
 
-impl SparseScheduleConflictHillClimber {
+impl Problem {
+
+    pub fn get_original_serviced_request(&self, solution: (usize, usize)) -> Option<(usize, usize)> {
+        self.get_original_serviced_request(solution)
+    }
     pub fn debug_print(&self) {
         for (req_id, alts) in &self.fake_requests {
             for alt in alts {
@@ -491,30 +499,6 @@ impl SparseScheduleConflictHillClimber {
     ) -> HashSet<(usize, usize)> {
         let mut conflicts = HashSet::new();
 
-        // O(n^2) run time. TODO(arjo) : reduce
-        /*for req_id1 in 0..allocations.len() {
-            let Some(alt_id1) = allocations[req_id1] else {
-                continue;
-            };
-            let Some(imp1) = implications.get(&(req_id1, alt_id1)) else {
-                continue;
-            };
-
-            for req_id2 in 0..allocations.len() {
-                let Some(alt_id2) = allocations[req_id2] else {
-                    continue;
-                };
-                if req_id1 == req_id2 {
-                    // No need to check alternatives as only one request will be satisfied
-                    continue;
-                }
-
-                if imp1.contains(&self.id_to_res[&(req_id2, alt_id2)]) {
-                    conflicts.insert((req_id1, alt_id1));
-                    conflicts.insert((req_id2, alt_id2));
-                }
-            }
-        }*/
 
         let mut seen = HashSet::new();
         for req_id1 in 0..allocations.len() {
@@ -541,6 +525,7 @@ impl SparseScheduleConflictHillClimber {
     pub fn solve(
         &self,
         hint: HashMap<usize, usize, FnvBuildHasher>,
+        stop: Arc<AtomicBool>
     ) -> Option<(Solution, Vec<Option<usize>>)> {
         let mut assignments = vec![None; self.fake_requests.len()];
 
@@ -559,15 +544,14 @@ impl SparseScheduleConflictHillClimber {
         );
         solution.positive_constraints.clear();
 
-        for (given, disallowed) in implications.iter() {
-            println!("Given {:?} => Not allowed {:?}", given, disallowed);
-        }
-
-        println!("Starting with: {:?}", solution);
         let mut priority_queue = BinaryHeap::new();
         priority_queue.push(solution);
 
         while let Some(solution) = priority_queue.pop() {
+            if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                println!("Greedy Solve Cancelled");
+                return None;
+            }
             if solution.conflicts.len() == 0 && solution.unallocated == 0 {
                 let solution = self.greedy_allocate(
                     &mut assignments,
@@ -577,6 +561,7 @@ impl SparseScheduleConflictHillClimber {
                     &backtracker,
                     &mut starvation_sets,
                 );
+                println!("Solved by greedy");
                 return Some((solution.clone(), assignments));
             }
 
@@ -633,12 +618,9 @@ impl SparseScheduleConflictHillClimber {
                     &mut starvation_sets,
                 );
                 if !explored.contains(&solution) && solution.unallocated == 0 {
-                    println!("Adding solution {:?}", solution);
                     priority_queue.push(solution.clone());
                 } else {
                     if solution.unallocated > 0 {
-                        println!("Got unallocated {:?}", solution);
-
                         let new_soln = self.backtrack(
                             &mut assignments,
                             &solution,
@@ -647,7 +629,6 @@ impl SparseScheduleConflictHillClimber {
                             &mut starvation_sets,
                         );
 
-                        println!("Back-tracking to {:?}", new_soln);
                         if new_soln.conflicts.len() == 0 && new_soln.unallocated == 0 {
                             return Some((new_soln.clone(), assignments));
                         }
@@ -657,7 +638,6 @@ impl SparseScheduleConflictHillClimber {
                             explored.insert(new_soln);
                         }
                     }
-                    println!("Seen");
                 }
 
                 if solution.conflicts.len() == 0 && solution.unallocated == 0 {
@@ -666,6 +646,7 @@ impl SparseScheduleConflictHillClimber {
                 explored.insert(solution);
             }
         }
+        println!("Unsolvable according to greedy");
         None
     }
 }
@@ -719,7 +700,7 @@ fn test_conflict_checker() {
     let req1 = vec![alternative1, alternative2];
     let req2 = vec![alternative1_cheaper];
 
-    let mut system = TimeBasedBranchAndBound::create_with_resources(&resources);
+    let mut system = ConflictTracker::create_with_resources(&resources);
 
     system.request_resources(req1);
     system.request_resources(req2);
@@ -727,7 +708,8 @@ fn test_conflict_checker() {
     let solver = system.generate_literals_and_remap_requests();
     //println!("Generated literals");
     solver.debug_print();
-    let (solution, _) = solver.solve(FnvHashMap::default()).unwrap();
+    let stop = Arc::new(AtomicBool::new(false)); 
+    let (solution, _) = solver.solve(FnvHashMap::default(), stop).unwrap();
     println!("{:?}", solution);
     assert!((solution.cost.0 - 8.0).abs() < 1.0);
 }
@@ -746,14 +728,36 @@ fn test_generation() {
     let (requests, resources) = generate_test_scenario_with_known_best(4, 4, 3);
     //println!("Requests {:?}", requests);
 
-    let mut system = TimeBasedBranchAndBound::create_with_resources(&resources);
+    let mut system = ConflictTracker::create_with_resources(&resources);
     for req in requests {
         system.request_resources(req);
     }
     // b.bench(|_| {
     let soln = system.generate_literals_and_remap_requests();
     soln.debug_print();
-    let _ = soln.solve(FnvHashMap::default()).unwrap();
+    let arc = Arc::new(AtomicBool::new(false));
+    let _ = soln.solve(FnvHashMap::default(), arc).unwrap();
     // Ok(())
     //});
+}
+
+
+pub struct GreedySolver;
+
+impl SolverAlgorithm for GreedySolver {
+    fn iterative_solve(&self, result_channel: std::sync::mpsc::Sender<super::AlgorithmState>, stop: Arc<AtomicBool>, problem: Problem) {
+        let hint = FnvHashMap::default();
+        let solution = problem.solve(hint, stop);
+
+        if let Some((_, solution)) = solution {
+            let solution = solution.iter().enumerate()
+                .filter(|(_, assignment)| assignment.is_some())
+                .map(|(idx, assignment)| (idx, assignment.unwrap()));
+            let solution = HashMap::from_iter(solution);
+            result_channel.send(super::AlgorithmState::OptimalSolution(solution));
+        }
+        else {
+            result_channel.send(super::AlgorithmState::UnSolveable);
+        }
+    }
 }
