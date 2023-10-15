@@ -9,7 +9,6 @@ use std::{
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use fnv::{FnvBuildHasher, FnvHashSet, FnvHashMap};
-use mapf::prelude::Algorithm;
 use ordered_float::OrderedFloat;
 use rand::Rng;
 

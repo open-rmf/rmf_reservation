@@ -1,7 +1,6 @@
 use std::{collections::HashMap, sync::{Arc, Mutex, mpsc::{Sender, self}, atomic::AtomicBool}, thread};
 
 use chrono::Duration;
-use mapf::prelude::Algorithm;
 
 use self::greedy_solver::{Problem};
 
@@ -51,7 +50,7 @@ impl AlgorithmPool {
     fn solve(&mut self, problem: Problem) {
 
         let (sender, rx) = mpsc::channel();
-        let mut join_handles = vec![]
+        let mut join_handles = vec![];
         for algorithm in &self.algorithms {
             let tx = sender.clone();
             let alg = algorithm.clone();
