@@ -424,7 +424,7 @@ impl Problem {
                     starvation_group.extend(idx.iter());
                 }
 
-                println!("Got starvation group {:?}", starvation_group);
+                //println!("Got starvation group {:?}", starvation_group);
                 starvation_sets.insert(StarvationGroup{ positive: starvation_group.clone()});
                 starvation_groups_found.push(StarvationGroup{ positive: starvation_group.clone()});
 
