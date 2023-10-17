@@ -1,7 +1,10 @@
 use std::{collections::HashMap, default, hash::Hash, sync::Arc};
 
+use serde_derive::{Serialize, Deserialize};
+
 use crate::{ReservationRequest, algorithms::{greedy_solver::{ConflictTracker, Problem, GreedySolver}, AsyncExecutor, AlgorithmPool, sat::SATSolver}};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ticket {
     count: usize
 }
