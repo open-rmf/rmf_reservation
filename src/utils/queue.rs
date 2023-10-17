@@ -2,6 +2,8 @@ use std::{
     collections::VecDeque,
     sync::{Condvar, Mutex},
 };
+
+#[derive(Default)]
 pub struct WorkQueue<T> {
     data: Mutex<VecDeque<T>>,
     cv: Condvar,
