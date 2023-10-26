@@ -6,6 +6,15 @@ pub struct Ticket {
     count: usize
 }
 
+impl Ticket {
+    pub fn get_id(&self) -> usize {
+        self.count
+    }
+
+    pub fn from_id(id: usize) -> Self {
+        Self { count: id }
+    }
+}
 
 enum ReservationState {
     Claimed(usize),
