@@ -1,7 +1,10 @@
 use std::{collections::HashMap, default, hash::Hash, sync::Arc};
 
+use serde_derive::{Serialize, Deserialize};
+
 use crate::{ReservationRequest, algorithms::{greedy_solver::{ConflictTracker, Problem, GreedySolver}, AsyncExecutor, AlgorithmPool, sat::SATSolver}};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ticket {
     count: usize
 }
@@ -69,6 +72,7 @@ impl FixedTimeReservationSystem {
     pub fn claim_request(&mut self, ticket: Ticket) -> Option<usize> {
         let result = self.async_executor.retrieve_best_solution_and_stop();
         if let Some(res) = result {
+            println!("{:?}", res);
             if let Some(res) = res.get(&ticket.count) {
                 self.claims.insert(ticket.count, ReservationState::Claimed(*res));
                 return Some(*res);
@@ -85,10 +89,11 @@ impl FixedTimeReservationSystem {
                 conflict_tracker.request_resources(vec![record[*index].clone()]);
                 continue;
             };
+            conflict_tracker.request_resources(record.clone());
         }
 
         let problem = conflict_tracker.generate_literals_and_remap_requests();
-
+        println!("{:?}", problem);
         Snapshot {
             problem
         }
@@ -98,7 +103,23 @@ impl FixedTimeReservationSystem {
 #[cfg(test)]
 #[test]
 fn test_fixed_time() {
+    use chrono::{Duration, Utc, TimeZone};
+
+    use crate::{StartTimeRange, cost_function::static_cost};
+
     let resources = vec!["res1".to_string(), "res2".to_string()];
     let mut res_sys = FixedTimeReservationSystem::create_with_resources(resources);
 
+    let alternatives = vec![
+        ReservationRequest {
+            parameters: crate::ReservationParameters{
+                resource_name: "res1".to_string(),
+                duration: Some(Duration::minutes(10)),
+                start_time:StartTimeRange::exactly_at(&Utc.with_ymd_and_hms(2023,7,8,7,10,11).unwrap())
+            }, 
+            cost_function: Arc::new(static_cost::StaticCost::new(2.0)) }];
+
+    let ticket = res_sys.request_resources(alternatives).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let claim = res_sys.claim_request(ticket).unwrap();
 }
