@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use itertools::Itertools;
+use pathfinding::directed::topological_sort;
+use petgraph::{Graph, algo::toposort};
 use varisat::{Var, ExtendFormula, Lit, CnfFormula, Solver};
 
 use chrono::{prelude::*, Duration};
@@ -270,12 +272,14 @@ impl SATFlexibleTimeModel {
             let mut edges = vec![];
             let mut vertices = vec![];
             for lit in model {
-                println!("Some");
+                
                 if !lit.is_positive() {
                     continue;
                 }
                 let v = lit.var();
                 let v_idx = v.index();
+
+                println!("{:?}", v_idx);
 
                 if let Some((from, to)) = idx_to_order.get(&v_idx)  {
                     edges.push(((*from), (*to)));
@@ -294,11 +298,15 @@ impl SATFlexibleTimeModel {
             // Build dependency graph
             let mut graph: HashMap<(usize, usize), HashSet<(usize, usize)>> = HashMap::new();
             let mut comes_after: HashMap<(usize, usize), HashSet<(usize, usize)>> = HashMap::new();
+            let mut pgraph = Graph::<(usize, usize), bool>::new();
+            let mut node_map = HashMap::new();
 
             for v in vertices {
                 graph.insert(v, HashSet::new());
+                node_map.insert(v, pgraph.add_node(v));
             }
             for (after, before) in edges {
+                pgraph.add_edge(*node_map.get(&after).unwrap(), *node_map.get(&before).unwrap(), true);
                 if let Some(v) = graph.get_mut(&after) {
                     v.insert(before.clone());
                 }
@@ -314,43 +322,20 @@ impl SATFlexibleTimeModel {
                     comes_after.insert(before, HashSet::from_iter([after].iter().map(|v| v.clone())));
                 }
             }
-
-            // Kahn's Algorithm. Can be parrallelized,
-            let mut vert_with_no_edges = VecDeque::new();
-            for (req, incoming_edges) in &graph {
-                if incoming_edges.len() == 0 {
-                    vert_with_no_edges.push_back(*req);
-                }
-            }
-
+            let Ok(res) = toposort(&pgraph, None) else {
+                panic!("Sometthing wrong with SAT formula found cycle.");
+            };
+            let order: Vec<_> = res.iter().map(|v| pgraph.raw_nodes()[v.index()].weight).collect();
             let mut schedules: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
-            while let Some(vertex) = vert_with_no_edges.pop_front() {
-                let resource = &problem.requests[vertex.0][vertex.1];
-                if let Some(v) = schedules.get_mut(&resource.parameters.resource_name)
-                {
-                    v.push(vertex);
-                }
-                else  {
-                    schedules.insert(resource.parameters.resource_name.clone(), vec![vertex.clone()]);
-                }
 
-                if let Some(successors) = comes_after.get(&vertex) {
-                    // Remove edge from graph
-                    //successor.remove(&vertex);
-                    for successor in successors {
-                        let Some(g) = graph.get_mut(successor) else {
-                            continue;
-                        };
-                        g.remove(&vertex);
-                    }
+            for res_pair in order {
+                let resource = &problem.requests[res_pair.0][res_pair.1].parameters.resource_name;
+
+                if let Some(sched) = schedules.get_mut(resource) {
+                    sched.push(res_pair);
                 }
-
-                graph.remove(&vertex); 
-
-                for (req, incoming_edges) in &graph {
-                    if incoming_edges.len() == 0 {
-                        vert_with_no_edges.push_back(req.clone());
-                    }
+                else {
+                    schedules.insert(resource.clone(), vec![res_pair]);
                 }
             }
 
@@ -370,9 +355,6 @@ impl SATFlexibleTimeModel {
                     panic!("Should never reach here")
                 };
                 for i in 0..sched.len() {
-
-                    // Hack cause toposort returns reversed list
-                    let i = (sched.len() - 1) - i;
 
                     let alternative = &problem.requests[sched[i].0][sched[i].1]; 
 
@@ -548,5 +530,45 @@ fn test_flexible_two_items_sat_solver() {
 
     assert_eq!(result.len(), 1usize);
     assert_eq!(result[&"Resource1".to_string()].len(), 2usize);
+    assert!(check_consistency(&result[&"Resource1".to_string()], &problem))
+}
+
+#[cfg(test)]
+#[test]
+fn test_flexible_n_items_sat_solver() {
+    use std::sync::Arc;
+
+    use crate::cost_function::static_cost;
+
+    let current_time = chrono::Utc::now();
+
+    let n = 40usize;
+    let task_dur = Duration::seconds(100);
+    let mut requests = vec![];
+    for i in 0..n {
+        requests.push(vec![
+            ReservationRequest {
+                parameters: crate::ReservationParameters { 
+                    resource_name: "Resource1".to_string(), 
+                    duration: Some(task_dur), 
+                    start_time: crate::StartTimeRange { 
+                        earliest_start: Some(current_time), 
+                        latest_start: Some(current_time + task_dur * (n as i32 + 1)) 
+                    }
+                },
+                cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+            }
+        ]);
+    }
+
+    let problem = Problem {
+        requests
+    };
+    
+    let model = SATFlexibleTimeModel::from_problem(&problem);
+    let result = model.retrieve_model();
+
+    assert_eq!(result.len(), 1usize);
+    assert_eq!(result[&"Resource1".to_string()].len(), n);
     assert!(check_consistency(&result[&"Resource1".to_string()], &problem))
 }
