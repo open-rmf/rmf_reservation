@@ -4,11 +4,12 @@ use std::sync::mpsc::Receiver;
 use chrono::Duration;
 use crate::database::Snapshot;
 
-use self::greedy_solver::{Problem};
+use self::greedy_solver::Problem;
 
 pub mod greedy_solver;
 pub mod kuhn_munkres;
 pub mod sat;
+pub mod sat_flexible_time_model;
 
 #[derive(Debug, Clone)]
 

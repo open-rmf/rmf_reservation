@@ -139,6 +139,7 @@ impl ReservationRequest {
         duration == self.parameters.duration
     }
 
+    /// Returns if it is possible for this request to be scheduled after the request in alternative
     pub fn can_be_scheduled_after(&self, alternative: &ReservationParameters) -> bool {
         if let Some(alt) = alternative.start_time.latest_start {
             if let Some(dur) = self.parameters.duration {
@@ -156,6 +157,27 @@ impl ReservationRequest {
             } else {
                 false
             }
+        }
+    }
+
+    /// Check if the current request has to always be after the previous request.
+    pub fn is_always_after(&self, alternative: &ReservationParameters) -> bool {
+        if let Some(earliest) = self.parameters.start_time.earliest_start 
+        {
+            if let Some(duration_alt) = alternative.duration {
+                if let Some(alt_latest_start) = alternative.start_time.latest_start {
+                    alt_latest_start < earliest
+                }
+                else {
+                    false
+                }
+            }
+            else {
+                false
+            }
+        }
+        else {
+            false
         }
     }
 }
