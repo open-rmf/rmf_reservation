@@ -1,7 +1,6 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{collections::{HashMap, HashSet, VecDeque}, sync::atomic::AtomicBool};
 
 use itertools::Itertools;
-use pathfinding::directed::topological_sort;
 use petgraph::{Graph, algo::toposort};
 use varisat::{Var, ExtendFormula, Lit, CnfFormula, Solver};
 
@@ -9,9 +8,11 @@ use chrono::{prelude::*, Duration};
 
 use crate::ReservationRequest;
 
+use super::SolverAlgorithm;
+
 #[derive(Debug, Clone)]
-struct Problem {
-    requests: Vec<Vec<ReservationRequest>>
+pub struct Problem {
+    pub(crate) requests: Vec<Vec<ReservationRequest>>
 }
 
 #[derive(Debug, Clone)]
@@ -51,19 +52,22 @@ fn check_consistency(assignments: &Vec<Assignment>, problem: &Problem) -> bool {
 }
 
 
-struct SATFlexibleTimeModel {
-    resources: HashMap<String, usize>,
-    id_to_resource: Vec<String>,
-    var_list: HashMap<(usize, usize), Var>,
-    idx_to_option: Vec<(usize, usize)>,
-    formula: CnfFormula,
-    problem: Problem,
-    final_schedule:  HashMap<String, Vec<Assignment>>
+pub struct SATFlexibleTimeModel;
+
+#[derive(Debug, Clone, Copy)]
+pub enum FlexibleSatError {
+    TimedOut,
+    NoSolution
 }
 
+impl SolverAlgorithm<Problem> for SATFlexibleTimeModel {
+    fn iterative_solve(&self, result_channel: std::sync::mpsc::Sender<super::AlgorithmState>, stop: std::sync::Arc<AtomicBool>, problem: Problem) {
+
+    }
+}
 
 impl SATFlexibleTimeModel {
-    pub fn from_problem(problem: &Problem) -> Self {
+    pub fn from_problem(problem: &Problem, stop: std::sync::Arc<AtomicBool>)-> Result<HashMap<String, Vec<Assignment>>, FlexibleSatError>  {
         let mut resources = HashMap::new();
         let mut id_to_resource = vec![];
         let mut var_list = HashMap::new();
@@ -137,7 +141,6 @@ impl SATFlexibleTimeModel {
                     let Some(m) = comes_after_vars.get_mut(&alternatives[i]) else{
                         panic!("Should never reach here");
                     };
-                    println!("X_{:?}{:?} -> {:?}", alternatives[i], alternatives[j], idx);
                     m.insert(alternatives[j], v);
                 }   
             }
@@ -249,6 +252,11 @@ impl SATFlexibleTimeModel {
         let current_time = chrono::Utc::now();
 
         while !solved {
+
+            if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(FlexibleSatError::TimedOut);
+            }
+
             final_schedule.clear();
 
             solver.solve();
@@ -267,7 +275,6 @@ impl SATFlexibleTimeModel {
             break;
             };
 
-            println!("Got model");
 
             let mut edges = vec![];
             let mut vertices = vec![];
@@ -278,8 +285,6 @@ impl SATFlexibleTimeModel {
                 }
                 let v = lit.var();
                 let v_idx = v.index();
-
-                println!("{:?}", v_idx);
 
                 if let Some((from, to)) = idx_to_order.get(&v_idx)  {
                     edges.push(((*from), (*to)));
@@ -296,31 +301,14 @@ impl SATFlexibleTimeModel {
             }
 
             // Build dependency graph
-            let mut graph: HashMap<(usize, usize), HashSet<(usize, usize)>> = HashMap::new();
-            let mut comes_after: HashMap<(usize, usize), HashSet<(usize, usize)>> = HashMap::new();
             let mut pgraph = Graph::<(usize, usize), bool>::new();
             let mut node_map = HashMap::new();
 
             for v in vertices {
-                graph.insert(v, HashSet::new());
                 node_map.insert(v, pgraph.add_node(v));
             }
             for (after, before) in edges {
                 pgraph.add_edge(*node_map.get(&after).unwrap(), *node_map.get(&before).unwrap(), true);
-                if let Some(v) = graph.get_mut(&after) {
-                    v.insert(before.clone());
-                }
-                else {
-                    graph.insert(after, HashSet::from_iter([before].iter().map(|v| v.clone())));
-                }
-
-
-                if let Some(v) = comes_after.get_mut(&after) {
-                    v.insert(after.clone());
-                }
-                else {
-                    comes_after.insert(before, HashSet::from_iter([after].iter().map(|v| v.clone())));
-                }
             }
             let Ok(res) = toposort(&pgraph, None) else {
                 panic!("Sometthing wrong with SAT formula found cycle.");
@@ -423,25 +411,15 @@ impl SATFlexibleTimeModel {
 
             if ok {
                 solved = true;
-                
             }
         }
 
-        Self {
-            resources,
-            id_to_resource,
-            var_list,
-            idx_to_option,
-            formula,
-            final_schedule,
-            problem: problem.clone()
+        if solved {
+            return Ok(final_schedule);
         }
-    }
-
-
-    fn retrieve_model(&self) -> HashMap<String, Vec<Assignment>> {
-        println!("{:?} ", self.final_schedule);
-        self.final_schedule.clone()
+        else {
+            return Err(FlexibleSatError::NoSolution);
+        }
     }
 }
 
@@ -470,8 +448,10 @@ fn test_flexible_one_item_sat_solver() {
         requests: vec![req1]
     };
     
-    let model = SATFlexibleTimeModel::from_problem(&problem);
-    let result = model.retrieve_model();
+
+    let stop = Arc::new(AtomicBool::new(false)); 
+    let model = SATFlexibleTimeModel::from_problem(&problem, stop);
+    let result = model.unwrap();
 
     assert_eq!(result.len(), 1usize);
     assert_eq!(result[&"Resource1".to_string()].len(), 1usize);
@@ -525,8 +505,9 @@ fn test_flexible_two_items_sat_solver() {
         requests: vec![req1, req2]
     };
     
-    let model = SATFlexibleTimeModel::from_problem(&problem);
-    let result = model.retrieve_model();
+    let stop = Arc::new(AtomicBool::new(false)); 
+    let model = SATFlexibleTimeModel::from_problem(&problem, stop);
+    let result = model.unwrap();
 
     assert_eq!(result.len(), 1usize);
     assert_eq!(result[&"Resource1".to_string()].len(), 2usize);
@@ -565,8 +546,50 @@ fn test_flexible_n_items_sat_solver() {
         requests
     };
     
-    let model = SATFlexibleTimeModel::from_problem(&problem);
-    let result = model.retrieve_model();
+    let stop = Arc::new(AtomicBool::new(false)); 
+    let model = SATFlexibleTimeModel::from_problem(&problem, stop);
+    let result = model.unwrap();
+
+    assert_eq!(result.len(), 1usize);
+    assert_eq!(result[&"Resource1".to_string()].len(), n);
+    assert!(check_consistency(&result[&"Resource1".to_string()], &problem))
+}
+
+#[cfg(test)]
+#[test]
+fn test_flexible_no_soln_sat_solver() {
+    use std::sync::Arc;
+
+    use crate::cost_function::static_cost;
+
+    let current_time = chrono::Utc::now();
+
+    let n = 60usize;
+    let task_dur = Duration::seconds(100);
+    let mut requests = vec![];
+    for i in 0..n {
+        requests.push(vec![
+            ReservationRequest {
+                parameters: crate::ReservationParameters { 
+                    resource_name: "Resource1".to_string(), 
+                    duration: Some(task_dur), 
+                    start_time: crate::StartTimeRange { 
+                        earliest_start: Some(current_time), 
+                        latest_start: Some(current_time + task_dur * (n as i32 + 1)) 
+                    }
+                },
+                cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+            }
+        ]);
+    }
+
+    let problem = Problem {
+        requests
+    };
+    
+    let stop = Arc::new(AtomicBool::new(false)); 
+    let model = SATFlexibleTimeModel::from_problem(&problem, stop);
+    let result = model.unwrap();
 
     assert_eq!(result.len(), 1usize);
     assert_eq!(result[&"Resource1".to_string()].len(), n);

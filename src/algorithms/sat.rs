@@ -45,7 +45,7 @@ struct AssumptionList {
 
 pub struct SATSolver;
 
-impl SolverAlgorithm for SATSolver {
+impl SolverAlgorithm<Problem> for SATSolver {
     fn iterative_solve(&self, result_channel: Sender<AlgorithmState>, stop: Arc<AtomicBool>, problem: Problem) {
         Self::from_hill_climber_with_optimality_proof(problem, result_channel, stop);
     }

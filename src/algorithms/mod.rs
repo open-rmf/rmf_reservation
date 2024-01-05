@@ -4,7 +4,7 @@ use std::sync::mpsc::Receiver;
 use chrono::Duration;
 use crate::database::Snapshot;
 
-use self::greedy_solver::Problem;
+use self::{greedy_solver::Problem, sat_flexible_time_model::Assignment};
 
 pub mod greedy_solver;
 pub mod kuhn_munkres;
@@ -14,18 +14,19 @@ pub mod sat_flexible_time_model;
 #[derive(Debug, Clone)]
 
 pub enum AlgorithmState {
+    FeasibleScheduleSolution(Vec<Vec<Assignment>>),
     OptimalSolution(HashMap<usize, usize>),
     PartialSolution(HashMap<usize, usize>, f64),
     NotFound,
     UnSolveable
 }
-pub(crate) struct AlgorithmPool {
+pub(crate) struct AlgorithmPool<P> {
     proposed_solution: AlgorithmState,
     running: Arc<AtomicBool>,
-    algorithms: Vec<Arc<dyn SolverAlgorithm + Send +Sync>>,
+    algorithms: Vec<Arc<dyn SolverAlgorithm<P> + Send +Sync>>,
 }
 
-impl Default for AlgorithmPool {
+impl<P> Default for AlgorithmPool<P> {
     fn default() -> Self {
         Self { 
             proposed_solution: AlgorithmState::NotFound, 
@@ -35,7 +36,7 @@ impl Default for AlgorithmPool {
     }
 }
 
-impl AlgorithmPool {
+impl<P: Clone + std::marker::Send> AlgorithmPool<P> {
 
     fn clean_solver(&self) -> Self {
         let mut res = Self::default();
@@ -45,6 +46,7 @@ impl AlgorithmPool {
 
     fn should_continue(&self) -> bool {
         match self.proposed_solution {
+            AlgorithmState::FeasibleScheduleSolution(_) => false, //TODO make true
             AlgorithmState::OptimalSolution(_) => false,
             AlgorithmState::PartialSolution(_, _) => true,
             AlgorithmState::NotFound => true,
@@ -52,11 +54,11 @@ impl AlgorithmPool {
         }
     }
 
-    pub fn add_algorithm(&mut self, solver: Arc<dyn SolverAlgorithm + Send + Sync>) {
+    pub fn add_algorithm(&mut self, solver: Arc<dyn SolverAlgorithm<P> + Send + Sync>) {
         self.algorithms.push(solver);
     }
 
-    fn solve(&mut self, problem: Problem, mtx: Arc<Mutex<AlgorithmState>>) {
+    fn solve(&mut self, problem: P, mtx: Arc<Mutex<AlgorithmState>>) {
 
         let (sender, rx) = mpsc::channel();
         let mut join_handles = vec![];
@@ -134,22 +136,25 @@ struct ExecutionContext {
     stop_handle: Arc<AtomicBool>
 }
 
-pub(crate) struct AsyncExecutor {
+pub(crate) struct AsyncExecutor<P, T> {
     execution_context: Option<Arc<Mutex<ExecutionContext>>>,
-    algorithm_pool_template: AlgorithmPool,
-    solution: Arc<Mutex<AlgorithmState>>
+    algorithm_pool_template: AlgorithmPool<P>,
+    solution: Arc<Mutex<AlgorithmState>>,
+    metadata: T
 }
 
-impl AsyncExecutor {
+impl<P: Clone + std::marker::Send, T: Default + Clone> AsyncExecutor<P,T> {
 
-    pub(crate) fn init(alg_pool: AlgorithmPool) -> Self {
+    pub(crate) fn init(alg_pool: AlgorithmPool<P>) -> Self {
         Self {
             execution_context: None,
             algorithm_pool_template: alg_pool,
             solution: Arc::new(Mutex::new(AlgorithmState::NotFound)),
+            metadata: T::default()
         }
     }
-    pub(crate) fn attempt_solve(&mut self, snapshot: Snapshot) {
+    pub(crate) fn attempt_solve(&mut self, snapshot: Snapshot<P, T>) {
+        self.metadata = snapshot.metadata;
         if let Some(context) = self.execution_context.clone() {
             let Ok(ref mut context) = context.lock() else {
                 // Should not reach here
@@ -176,7 +181,7 @@ impl AsyncExecutor {
         
     }
 
-    pub(crate) fn retrieve_best_solution_and_stop(&mut self) -> Option<HashMap<usize, usize>> {
+    pub(crate) fn retrieve_best_fixed_time_solution_and_stop(&mut self) -> Option<HashMap<usize, usize>> {
         
         if let Some(context) = &self.execution_context {
             context.lock().unwrap().stop_handle.store(false, std::sync::atomic::Ordering::Relaxed); 
@@ -189,16 +194,34 @@ impl AsyncExecutor {
         match &data {
             AlgorithmState::OptimalSolution(solution) => return Some(solution.clone()),
             AlgorithmState::PartialSolution(solution, _) => return Some(solution.clone()),
+            AlgorithmState::FeasibleScheduleSolution(_) => return None,
             _=> {}
         };
         
 
         return None; 
     }
+
+    pub(crate) fn retrieve_feasible_schedule(&mut self) -> Option<(Vec<Vec<Assignment>>, T)> {
+        if let Some(context) = &self.execution_context {
+            context.lock().unwrap().stop_handle.store(false, std::sync::atomic::Ordering::Relaxed); 
+        }
+        else {
+            return None;
+        }
+
+        let data = self.solution.lock().unwrap().clone();
+        match &data {
+            AlgorithmState::FeasibleScheduleSolution(solution) => return Some((solution.clone(), self.metadata.clone())),
+            _=> {}
+        };  
+
+        return None; 
+    }
 }
 
-pub trait SolverAlgorithm {
-    fn iterative_solve(&self, result_channel: Sender<AlgorithmState>, stop: Arc<AtomicBool>, problem: Problem);
+pub trait SolverAlgorithm<P> {
+    fn iterative_solve(&self, result_channel: Sender<AlgorithmState>, stop: Arc<AtomicBool>, problem: P);
 }
 
 #[cfg(test)]

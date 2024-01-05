@@ -743,7 +743,7 @@ fn test_generation() {
 
 pub struct GreedySolver;
 
-impl SolverAlgorithm for GreedySolver {
+impl SolverAlgorithm<Problem> for GreedySolver {
     fn iterative_solve(&self, result_channel: std::sync::mpsc::Sender<super::AlgorithmState>, stop: Arc<AtomicBool>, problem: Problem) {
         let hint = FnvHashMap::default();
         let solution = problem.solve(hint, stop);
