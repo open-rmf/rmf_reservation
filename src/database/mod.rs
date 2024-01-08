@@ -1,8 +1,9 @@
 use std::{collections::HashMap, default, hash::Hash, sync::Arc, fs::Metadata};
 
+use chrono::{Utc, DateTime, Duration};
 use serde_derive::{Serialize, Deserialize};
 
-use crate::{ReservationRequest, algorithms::{greedy_solver::{ConflictTracker, Problem, GreedySolver}, AsyncExecutor, AlgorithmPool, sat::SATSolver, sat_flexible_time_model::SATFlexibleTimeModel}, Assignment, StartTimeRange};
+use crate::{ReservationRequest, algorithms::{greedy_solver::{ConflictTracker, Problem, GreedySolver}, AsyncExecutor, AlgorithmPool, sat::SATSolver, sat_flexible_time_model::{SATFlexibleTimeModel, Assignment}}, Assignment, StartTimeRange, wait_points::{wait_points::{WaitPointInfo, WaitPointSystem, WaitPointRequest}, self}};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ticket {
@@ -33,7 +34,7 @@ pub struct FixedTimeReservationSystem {
     record: HashMap<usize, Vec<ReservationRequest>>,
     claims: HashMap<usize, ReservationState>,
     max_id: usize,
-    async_executor: AsyncExecutor<Problem>
+    async_executor: AsyncExecutor<Problem, ()>
 }
 
 impl FixedTimeReservationSystem {
@@ -101,9 +102,29 @@ impl FixedTimeReservationSystem {
     }
 }
 
+
+struct SafeSpot {
+    name: String,
+    min_travel_time: Duration
+}
+
+
+struct Goal {
+    resource: String,
+    satiafies_alt: usize,
+    time: DateTime<Utc>
+}
+
+
+pub enum ClaimSpot {
+    GoImmediately(Goal),
+    WaitAtThenGo(usize, Goal),
+    WaitPermanently(usize)
+}
+
 #[derive(Default, Debug, Clone)]
 struct FlexibleTimeReservationSystemMetadata {
-    mapping: HashMap<usize, usize>
+    mapping: HashMap<usize, usize>,
 }
 
 pub struct FlexibleTimeReservationSystem {
@@ -111,7 +132,8 @@ pub struct FlexibleTimeReservationSystem {
     record: HashMap<usize, Vec<ReservationRequest>>,
     claims: HashMap<usize, super::algorithms::sat_flexible_time_model::Assignment>,
     max_id: usize,
-    async_executor: AsyncExecutor<super::algorithms::sat_flexible_time_model::Problem, FlexibleTimeReservationSystemMetadata>
+    async_executor: AsyncExecutor<super::algorithms::sat_flexible_time_model::Problem, FlexibleTimeReservationSystemMetadata>,
+    wait_point_system: WaitPointSystem
 }
 
 impl FlexibleTimeReservationSystem {
@@ -126,6 +148,7 @@ impl FlexibleTimeReservationSystem {
             async_executor: AsyncExecutor::init(alg_pool),
             record: HashMap::new(),
             claims: HashMap::new(),
+            wait_point_system: WaitPointSystem::default(),
             max_id: 0,
         }
     }
@@ -141,24 +164,79 @@ impl FlexibleTimeReservationSystem {
         Ok(result)
     }
 
-    pub fn claim_request(&mut self, ticket: Ticket) -> Option<usize> {
-        let Some((result, Metadata)) = self.async_executor.retrieve_feasible_schedule() else {
-            return None;
+    pub fn claim_request(&mut self, ticket: Ticket, safe_spot: Vec<String>) -> Result<ClaimSpot, &str> {
+
+        if self.claims.contains_key(&ticket.get_id()) {
+            return Err("Ticket already claimed");
+        }
+
+        if safe_spot.len() == 0 {
+            println!("You should include wait spots otherwise, we may lead to deadlock");
+        }
+        let Some((result, metadata)) = self.async_executor.retrieve_feasible_schedule() else {
+            
+            println!("Warning: ");
+            let wait_points: Vec<_> = safe_spot.iter().map(|resource| WaitPointRequest {
+                wait_point: resource.clone(),
+                time: Utc::now() // Get time now?
+            }).collect();
+
+            let Ok(ticket) = self.wait_point_system.request_waitpoint(&wait_points) else {
+                return Err("Could not allocate any wait points. Are we sure there are enough waitpoints available?");
+            };
+            return Ok(ClaimSpot::WaitPermanently(ticket.selected_index));
         };
 
-        if let Some(res) = result {
-            println!("{:?}", res);
-            if let Some(res) = res.get(&ticket.count) {
-                self.claims.insert(ticket.count, ReservationState::Claimed(*res));
-                return Some(*res);
+        let Some(request_idx) = metadata.mapping.get(&ticket.get_id()) else {
+            // This hsould never happen therefore panic instead of error.
+            panic!("Metadata was malformed");
+        };
+
+        // TODO(arjoc): Inefficient: We should have better data structure to back this
+        for (resource, schedule) in result {
+            for item in schedule {
+                if item.id.0 == *request_idx {
+                    // TODO(arjoc) Add some form of time estimator.
+                    if item.start_time > Utc::now() {
+                        let wait_points: Vec<_> = safe_spot.iter().map(|resource| WaitPointRequest {
+                            wait_point: resource.clone(),
+                            time: Utc::now() // Get time now?
+                        }).collect();
+            
+                        let Ok(ticket) = self.wait_point_system.request_waitpoint(&wait_points) else {
+                            return Err("Could not allocate any wait points. Are we sure there are enough waitpoints available?");
+                        };
+                        return Ok(ClaimSpot::WaitAtThenGo(ticket.selected_index, Goal {
+                            resource,
+                            satiafies_alt: item.id.1,
+                            time: item.start_time
+                        }));
+                    }
+                    else {
+                        return Ok(ClaimSpot::GoImmediately(Goal {
+                            resource,
+                            satiafies_alt: item.id.1,
+                            time: item.start_time
+                        }));
+                    }
+                }
             }
         }
-        None
+
+        return Err("We should never reach here. Something went wrong internally");
     }
 
-    pub fn extend_request(&mut self, ticket: &Ticket) -> Result<(), String>{
-        Err(format!("Unimplimented"))
+    pub fn release_waitspot(&mut self, wait_point: &String) {
+        self.wait_point_system.release_waitpoint_at_time(wait_point, &Utc::now());
     }
+
+    /*pub fn extend_request(&mut self, ticket: &Ticket) -> Result<(), &str>{
+        if self.claims.contains_key(&ticket.get_id()) {
+            return Err("Ticket already claimed");
+        }
+
+        Ok(());
+    }*/
 
     fn get_snapshot(&mut self) -> Snapshot<super::algorithms::sat_flexible_time_model::Problem, FlexibleTimeReservationSystemMetadata> {
 

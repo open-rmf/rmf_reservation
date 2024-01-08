@@ -8,7 +8,7 @@ use chrono::{prelude::*, Duration};
 
 use crate::ReservationRequest;
 
-use super::SolverAlgorithm;
+use super::{SolverAlgorithm, AlgorithmState};
 
 #[derive(Debug, Clone)]
 pub struct Problem {
@@ -62,7 +62,12 @@ pub enum FlexibleSatError {
 
 impl SolverAlgorithm<Problem> for SATFlexibleTimeModel {
     fn iterative_solve(&self, result_channel: std::sync::mpsc::Sender<super::AlgorithmState>, stop: std::sync::Arc<AtomicBool>, problem: Problem) {
-
+        let Ok(problem) = Self::from_problem(&problem, stop) else {
+            result_channel.send(AlgorithmState::UnSolveable);
+            return;
+        };
+    
+        result_channel.send(AlgorithmState::FeasibleScheduleSolution(problem));
     }
 }
 

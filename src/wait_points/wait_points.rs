@@ -92,18 +92,13 @@ impl WaitPointSystem {
 
     pub fn release_waitpoint_at_time(
         &mut self,
-        response: &TicketResponse,
         wait_point: &String,
         time: &DateTime<Utc>,
     ) -> Result<(), &str> {
         if let Some(mut wait_point) = self.wait_points.get_mut(wait_point) {
             if let Some(mut waitpoint) = wait_point.back_mut() {
-                if response.uuid == waitpoint.uuid {
-                    waitpoint.time = Some(*time);
-                    Ok(())
-                } else {
-                    Err("UUIDs don't match")
-                }
+                waitpoint.time = Some(*time);
+                Ok(())
             } else {
                 Err("Wait point was empty")
             }
@@ -150,11 +145,11 @@ fn test_waitpoint() {
 
     let claim_time = test_time(5);
     let result1 =
-        wait_point_system.release_waitpoint_at_time(&result.clone().unwrap(), &wp1, &claim_time);
+        wait_point_system.release_waitpoint_at_time( &wp1, &claim_time);
     assert!(result1.is_ok());
 
     // Attempt invalid request
-    let result1 = wait_point_system.release_waitpoint_at_time(&result.unwrap(), &wp2, &claim_time);
+    let result1 = wait_point_system.release_waitpoint_at_time( &wp2, &claim_time);
     assert!(result1.is_err());
 
     // Try again, we should get the same spot as we arrive early.

@@ -14,7 +14,7 @@ pub mod sat_flexible_time_model;
 #[derive(Debug, Clone)]
 
 pub enum AlgorithmState {
-    FeasibleScheduleSolution(Vec<Vec<Assignment>>),
+    FeasibleScheduleSolution(HashMap<String, Vec<Assignment>>),
     OptimalSolution(HashMap<usize, usize>),
     PartialSolution(HashMap<usize, usize>, f64),
     NotFound,
@@ -202,7 +202,7 @@ impl<P: Clone + std::marker::Send, T: Default + Clone> AsyncExecutor<P,T> {
         return None; 
     }
 
-    pub(crate) fn retrieve_feasible_schedule(&mut self) -> Option<(Vec<Vec<Assignment>>, T)> {
+    pub(crate) fn retrieve_feasible_schedule(&mut self) -> Option<(HashMap<String, Vec<Assignment>>, T)> {
         if let Some(context) = &self.execution_context {
             context.lock().unwrap().stop_handle.store(false, std::sync::atomic::Ordering::Relaxed); 
         }
