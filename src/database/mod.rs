@@ -136,22 +136,23 @@ pub struct FlexibleTimeReservationSystem {
     wait_point_system: WaitPointSystem
 }
 
-impl FlexibleTimeReservationSystem {
-
-    pub fn create_with_resources(resources: Vec<String>) -> Self {
-        
+impl Default for FlexibleTimeReservationSystem {
+    fn default() -> Self {
         let mut alg_pool = AlgorithmPool::<super::algorithms::sat_flexible_time_model::Problem>::default();
         alg_pool.add_algorithm(Arc::new(SATFlexibleTimeModel));
         
-        Self {
-            resources,
-            async_executor: AsyncExecutor::init(alg_pool),
-            record: HashMap::new(),
-            claims: HashMap::new(),
-            wait_point_system: WaitPointSystem::default(),
-            max_id: 0,
+        Self { 
+            resources: Default::default(), 
+            record: Default::default(), 
+            claims: Default::default(), 
+            max_id: 0, 
+            async_executor: AsyncExecutor::init(alg_pool), 
+            wait_point_system: Default::default() 
         }
     }
+}
+
+impl FlexibleTimeReservationSystem {
 
     pub fn request_resources(&mut self, alternatives: Vec<ReservationRequest>) -> Result<Ticket, &'static str> {
         self.record.insert(self.max_id, alternatives);
