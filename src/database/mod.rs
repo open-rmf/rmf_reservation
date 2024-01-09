@@ -102,6 +102,19 @@ impl FixedTimeReservationSystem {
     }
 }
 
+pub trait ClockSource {
+    fn now(&self) -> chrono::DateTime<Utc>;
+}
+
+#[derive(Default)]
+pub struct DefaultUtcClock;
+
+impl ClockSource for DefaultUtcClock {
+    fn now(&self) -> chrono::DateTime<Utc> {
+        return Utc::now();
+    }
+}
+
 
 struct SafeSpot {
     name: String,
@@ -127,32 +140,46 @@ struct FlexibleTimeReservationSystemMetadata {
     mapping: HashMap<usize, usize>,
 }
 
-pub struct FlexibleTimeReservationSystem {
-    resources: Vec<String>,
+pub struct FlexibleTimeReservationSystem<ClockType = DefaultUtcClock> {
     record: HashMap<usize, Vec<ReservationRequest>>,
     claims: HashMap<usize, super::algorithms::sat_flexible_time_model::Assignment>,
     max_id: usize,
     async_executor: AsyncExecutor<super::algorithms::sat_flexible_time_model::Problem, FlexibleTimeReservationSystemMetadata>,
-    wait_point_system: WaitPointSystem
+    wait_point_system: WaitPointSystem,
+    clock_source: ClockType
 }
 
-impl Default for FlexibleTimeReservationSystem {
+impl<ClockType: ClockSource + Default> Default for FlexibleTimeReservationSystem<ClockType> {
     fn default() -> Self {
         let mut alg_pool = AlgorithmPool::<super::algorithms::sat_flexible_time_model::Problem>::default();
         alg_pool.add_algorithm(Arc::new(SATFlexibleTimeModel));
         
         Self { 
-            resources: Default::default(), 
             record: Default::default(), 
             claims: Default::default(), 
             max_id: 0, 
             async_executor: AsyncExecutor::init(alg_pool), 
-            wait_point_system: Default::default() 
+            wait_point_system: Default::default(),
+            clock_source: ClockType::default()
         }
     }
 }
 
-impl FlexibleTimeReservationSystem {
+impl<ClockType: ClockSource> FlexibleTimeReservationSystem<ClockType> {
+
+    pub fn create_with_clock(clock_source: ClockType) -> Self {
+        let mut alg_pool = AlgorithmPool::<super::algorithms::sat_flexible_time_model::Problem>::default();
+        alg_pool.add_algorithm(Arc::new(SATFlexibleTimeModel));
+        
+        Self { 
+            record: Default::default(), 
+            claims: Default::default(), 
+            max_id: 0, 
+            async_executor: AsyncExecutor::init(alg_pool), 
+            wait_point_system: Default::default(),
+            clock_source
+        }
+    }
 
     pub fn request_resources(&mut self, alternatives: Vec<ReservationRequest>) -> Result<Ticket, &'static str> {
         self.record.insert(self.max_id, alternatives);
@@ -198,7 +225,7 @@ impl FlexibleTimeReservationSystem {
             for item in schedule {
                 if item.id.0 == *request_idx {
                     // TODO(arjoc) Add some form of time estimator.
-                    if item.start_time > Utc::now() {
+                    if item.start_time > self.clock_source.now() {
                         let wait_points: Vec<_> = safe_spot.iter().map(|resource| WaitPointRequest {
                             wait_point: resource.clone(),
                             time: Utc::now() // Get time now?
@@ -299,7 +326,7 @@ fn test_sat_flexible_time_model() {
     use crate::cost_function::static_cost::StaticCost;
 
     let now = Utc::now();
-    let mut flexible_ressys = FlexibleTimeReservationSystem::default();
+    let mut flexible_ressys: FlexibleTimeReservationSystem<DefaultUtcClock> = FlexibleTimeReservationSystem::default();
 
 
     let alternatives1 = vec![
