@@ -3,7 +3,7 @@ use std::{collections::HashMap, default, hash::Hash, sync::Arc, fs::Metadata};
 use chrono::{Utc, DateTime, Duration};
 use serde_derive::{Serialize, Deserialize};
 
-use crate::{ReservationRequest, algorithms::{greedy_solver::{ConflictTracker, Problem, GreedySolver}, AsyncExecutor, AlgorithmPool, sat::SATSolver, sat_flexible_time_model::{SATFlexibleTimeModel, Assignment}}, Assignment, StartTimeRange, wait_points::{wait_points::{WaitPointInfo, WaitPointSystem, WaitPointRequest}, self}};
+use crate::{ReservationRequest, algorithms::{greedy_solver::{ConflictTracker, Problem, GreedySolver}, AsyncExecutor, AlgorithmPool, sat::SATSolver, sat_flexible_time_model::{SATFlexibleTimeModel, Assignment as FlexibleAssignment}}, StartTimeRange, wait_points::{wait_points::{WaitPointInfo, WaitPointSystem, WaitPointRequest}, self}};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ticket {
@@ -165,7 +165,7 @@ impl FlexibleTimeReservationSystem {
         Ok(result)
     }
 
-    pub fn claim_request(&mut self, ticket: Ticket, safe_spot: Vec<String>) -> Result<ClaimSpot, &str> {
+    pub fn claim_request(&mut self, ticket: Ticket, safe_spot: &Vec<String>) -> Result<ClaimSpot, &str> {
 
         if self.claims.contains_key(&ticket.get_id()) {
             return Err("Ticket already claimed");
@@ -176,7 +176,7 @@ impl FlexibleTimeReservationSystem {
         }
         let Some((result, metadata)) = self.async_executor.retrieve_feasible_schedule() else {
             
-            println!("Warning: ");
+            println!("Warning: solver has not concluded any solution yet. Please listen for solutions when ready. For now proceed to wait point.");
             let wait_points: Vec<_> = safe_spot.iter().map(|resource| WaitPointRequest {
                 wait_point: resource.clone(),
                 time: Utc::now() // Get time now?
@@ -243,8 +243,8 @@ impl FlexibleTimeReservationSystem {
 
         let mut requests = vec![];
         let mut mapping = HashMap::<usize, usize>::new();
-        for (key, alts) in self.record {
-            mapping.insert(requests.len(), key);
+        for (key, alts) in &self.record {
+            mapping.insert(requests.len(), *key);
             if let Some(reservation_state) = self.claims.get(&key) {
                 let mut selected = alts[reservation_state.id.1].clone();
                 selected.parameters.start_time = StartTimeRange::exactly_at(&reservation_state.start_time);
@@ -290,4 +290,53 @@ fn test_fixed_time() {
     let ticket = res_sys.request_resources(alternatives).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(500));
     let claim = res_sys.claim_request(ticket).unwrap();
+}
+
+#[cfg(test)]
+#[test]
+fn test_sat_flexible_time_model() {
+
+    use crate::cost_function::static_cost::StaticCost;
+
+    let now = Utc::now();
+    let mut flexible_ressys = FlexibleTimeReservationSystem::default();
+
+
+    let alternatives1 = vec![
+        ReservationRequest {
+            parameters: crate::ReservationParameters{
+                resource_name: "res1".to_string(),
+                duration: Some(Duration::minutes(10)),
+                start_time: StartTimeRange {
+                    earliest_start: Some(now + Duration::seconds(180)),
+                    latest_start: Some(now + Duration::seconds(200))
+                }
+            }, 
+            cost_function: Arc::new(StaticCost::new(2.0)) }];
+    let ticket1 = flexible_ressys.request_resources(alternatives1).unwrap();
+
+
+    let alternatives2 = vec![
+        ReservationRequest {
+            parameters: crate::ReservationParameters{
+                resource_name: "res2".to_string(),
+                duration: Some(Duration::minutes(10)),
+                start_time: StartTimeRange {
+                    earliest_start: Some(now + Duration::seconds(180)),
+                    latest_start: Some(now + Duration::seconds(200))
+                }
+            }, 
+            cost_function: Arc::new(StaticCost::new(2.0)) }];
+    let ticket2 = flexible_ressys.request_resources(alternatives2).unwrap();
+
+    let safe_spots = vec!["1".to_string(), "2".to_string()];
+
+    // 400 milliseconds is enough for the solver hopefully
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+
+    let res1 = flexible_ressys.claim_request(ticket2, &safe_spots).unwrap();
+    let res2 = flexible_ressys.claim_request(ticket1, &safe_spots).unwrap();
+
+    assert!(matches!(res1, ClaimSpot::WaitAtThenGo(_x, _y)));
+    assert!(matches!(res2, ClaimSpot::WaitAtThenGo(_x, _y)));
 }

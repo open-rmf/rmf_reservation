@@ -36,7 +36,7 @@ impl<P> Default for AlgorithmPool<P> {
     }
 }
 
-impl<P: Clone + std::marker::Send> AlgorithmPool<P> {
+impl<P: Clone + std::marker::Send +'static> AlgorithmPool<P> {
 
     fn clean_solver(&self) -> Self {
         let mut res = Self::default();
@@ -67,9 +67,9 @@ impl<P: Clone + std::marker::Send> AlgorithmPool<P> {
             let alg = algorithm.clone();
             let stop = self.running.clone();
             //TODO(arjoc) unessecary clone
-            let problem = problem.clone();
+            let p = problem.clone();
             join_handles.push(thread::spawn(move || {
-                alg.iterative_solve(tx, stop, problem)
+                alg.iterative_solve(tx, stop, p)
             }));
         }
         'finished:
@@ -143,7 +143,7 @@ pub(crate) struct AsyncExecutor<P, T> {
     metadata: T
 }
 
-impl<P: Clone + std::marker::Send, T: Default + Clone> AsyncExecutor<P,T> {
+impl<P: Clone + std::marker::Send + 'static, T: Default + Clone> AsyncExecutor<P,T> {
 
     pub(crate) fn init(alg_pool: AlgorithmPool<P>) -> Self {
         Self {

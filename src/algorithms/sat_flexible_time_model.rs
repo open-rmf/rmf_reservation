@@ -182,7 +182,6 @@ impl SATFlexibleTimeModel {
                 }
             }
 
-            println!("Transitivity");
             // Transitivity (Warning O(n^3))
             for (_ij, x_ij_) in comes_after_vars.iter() {
                 for (km, X_ijkm) in x_ij_.iter() {
@@ -194,8 +193,6 @@ impl SATFlexibleTimeModel {
                             //panic!("Failed to get {:?}", nl);
                             continue;
                         };
-
-                        println!("X_{:?}{:?} v X_{:?}{:?} v ~X_{:?}{:?}", _ij, km, km, nl, _ij, nl);
 
                         formula.add_clause(&[
                             Lit::from_var(*X_ijkm, false),
@@ -418,7 +415,7 @@ impl SATFlexibleTimeModel {
                 solved = true;
             }
         }
-
+       
         if solved {
             return Ok(final_schedule);
         }
