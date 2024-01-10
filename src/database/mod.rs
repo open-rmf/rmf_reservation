@@ -121,14 +121,14 @@ struct SafeSpot {
     min_travel_time: Duration
 }
 
-
+#[derive(Debug, Clone)]
 struct Goal {
     resource: String,
-    satiafies_alt: usize,
+    satisfies_alt: usize,
     time: DateTime<Utc>
 }
 
-
+#[derive(Debug, Clone)]
 pub enum ClaimSpot {
     GoImmediately(Goal),
     WaitAtThenGo(usize, Goal),
@@ -199,7 +199,7 @@ impl<ClockType: ClockSource> FlexibleTimeReservationSystem<ClockType> {
         }
 
         if safe_spot.len() == 0 {
-            println!("You should include wait spots otherwise, we may lead to deadlock");
+            println!("You should include wait spots otherwise, it may lead to deadlock");
         }
         let Some((result, metadata)) = self.async_executor.retrieve_feasible_schedule() else {
             
@@ -236,14 +236,14 @@ impl<ClockType: ClockSource> FlexibleTimeReservationSystem<ClockType> {
                         };
                         return Ok(ClaimSpot::WaitAtThenGo(ticket.selected_index, Goal {
                             resource,
-                            satiafies_alt: item.id.1,
+                            satisfies_alt: item.id.1,
                             time: item.start_time
                         }));
                     }
                     else {
                         return Ok(ClaimSpot::GoImmediately(Goal {
                             resource,
-                            satiafies_alt: item.id.1,
+                            satisfies_alt: item.id.1,
                             time: item.start_time
                         }));
                     }
