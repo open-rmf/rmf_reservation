@@ -122,10 +122,10 @@ struct SafeSpot {
 }
 
 #[derive(Debug, Clone)]
-struct Goal {
-    resource: String,
-    satisfies_alt: usize,
-    time: DateTime<Utc>
+pub struct Goal {
+    pub resource: String,
+    pub satisfies_alt: usize,
+    pub time: DateTime<Utc>
 }
 
 #[derive(Debug, Clone)]
