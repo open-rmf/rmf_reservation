@@ -257,14 +257,6 @@ impl<ClockType: ClockSource> FlexibleTimeReservationSystem<ClockType> {
         self.wait_point_system.block_waitpoints(wait_points);
     }
 
-    /*pub fn extend_request(&mut self, ticket: &Ticket) -> Result<(), &str>{
-        if self.claims.contains_key(&ticket.get_id()) {
-            return Err("Ticket already claimed");
-        }
-
-        Ok(());
-    }*/
-
     fn get_snapshot(&mut self) -> Snapshot<super::algorithms::sat_flexible_time_model::Problem, FlexibleTimeReservationSystemMetadata> {
 
         let mut requests = vec![];
