@@ -90,6 +90,29 @@ impl WaitPointSystem {
         Err("No solution found".to_string())
     }
 
+    // TODO(arjoc) make 
+    pub fn block_waitpoints(&mut self, wait_points: &Vec<String>) -> Result<(), &str>
+    {
+        for wait_point in wait_points {
+            if let Some(mut index) = self.wait_points.get_mut(wait_point) {
+                if index.len() > 0 {
+                    return Err("");
+                }
+                index.push_back(WaitPointInfo {
+                    time: None,
+                    uuid: Uuid::new_v4().to_string(),
+                });
+            }
+            else {
+                self.wait_points.insert(wait_point.clone(), VecDeque::from_iter([WaitPointInfo {
+                    time: None,
+                    uuid: Uuid::new_v4().to_string(), 
+                }].into_iter()));
+            }
+        }
+        Ok(())
+    }
+
     pub fn release_waitpoint_at_time(
         &mut self,
         wait_point: &String,
@@ -104,6 +127,24 @@ impl WaitPointSystem {
             }
         } else {
             Err("No waitpoint with given name found.")
+        }
+    }
+
+    pub fn flush_until(&mut self, time: &DateTime<Utc>) 
+    {
+        for (_, queue) in self.wait_points.iter_mut() {
+            while let Some(qitem) = queue.front() {
+                if qitem.time == None {
+                    break;
+                }
+                if let Some(curr_time) = qitem.time {
+                    if curr_time >= *time {
+                        break;
+                    }
+                }
+
+                queue.pop_front();
+            }
         }
     }
 }

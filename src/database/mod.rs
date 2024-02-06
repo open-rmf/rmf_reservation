@@ -116,11 +116,6 @@ impl ClockSource for DefaultUtcClock {
 }
 
 
-struct SafeSpot {
-    name: String,
-    min_travel_time: Duration
-}
-
 #[derive(Debug, Clone)]
 pub struct Goal {
     pub resource: String,
@@ -256,6 +251,10 @@ impl<ClockType: ClockSource> FlexibleTimeReservationSystem<ClockType> {
 
     pub fn release_waitspot(&mut self, wait_point: &String) {
         self.wait_point_system.release_waitpoint_at_time(wait_point, &Utc::now());
+    }
+
+    pub fn set_current_occupied_waitpoints(&mut self, wait_points: &Vec<String>) {
+        self.wait_point_system.block_waitpoints(wait_points);
     }
 
     /*pub fn extend_request(&mut self, ticket: &Ticket) -> Result<(), &str>{
