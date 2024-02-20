@@ -106,7 +106,7 @@ pub trait ClockSource {
     fn now(&self) -> chrono::DateTime<Utc>;
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct DefaultUtcClock;
 
 impl ClockSource for DefaultUtcClock {
@@ -144,10 +144,10 @@ pub struct FlexibleTimeReservationSystem<ClockType = DefaultUtcClock> {
     clock_source: ClockType
 }
 
-impl<ClockType: ClockSource + Default> Default for FlexibleTimeReservationSystem<ClockType> {
+impl<ClockType: ClockSource + Default + Clone + std::marker::Send + std::marker::Sync  + 'static> Default for FlexibleTimeReservationSystem<ClockType> {
     fn default() -> Self {
         let mut alg_pool = AlgorithmPool::<super::algorithms::sat_flexible_time_model::Problem>::default();
-        alg_pool.add_algorithm(Arc::new(SATFlexibleTimeModel));
+        alg_pool.add_algorithm(Arc::new(SATFlexibleTimeModel  {clock_source: ClockType::default()}));
         
         Self { 
             record: Default::default(), 
@@ -160,11 +160,11 @@ impl<ClockType: ClockSource + Default> Default for FlexibleTimeReservationSystem
     }
 }
 
-impl<ClockType: ClockSource> FlexibleTimeReservationSystem<ClockType> {
+impl<ClockType: ClockSource + Clone  + std::marker::Send + std::marker::Sync + 'static> FlexibleTimeReservationSystem<ClockType> {
 
     pub fn create_with_clock(clock_source: ClockType) -> Self {
         let mut alg_pool = AlgorithmPool::<super::algorithms::sat_flexible_time_model::Problem>::default();
-        alg_pool.add_algorithm(Arc::new(SATFlexibleTimeModel));
+        alg_pool.add_algorithm(Arc::new(SATFlexibleTimeModel {clock_source: clock_source.clone()}));
         
         Self { 
             record: Default::default(), 
@@ -201,7 +201,7 @@ impl<ClockType: ClockSource> FlexibleTimeReservationSystem<ClockType> {
             println!("Warning: solver has not concluded any solution yet. Please listen for solutions when ready. For now proceed to wait point.");
             let wait_points: Vec<_> = safe_spot.iter().map(|resource| WaitPointRequest {
                 wait_point: resource.clone(),
-                time: Utc::now() // Get time now?
+                time: self.clock_source.now()
             }).collect();
 
             let Ok(ticket) = self.wait_point_system.request_waitpoint(&wait_points) else {

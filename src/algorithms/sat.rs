@@ -271,7 +271,6 @@ impl SATSolver {
         queue.push_back(no_assumption);
 
         while let Some(mut assumptions) = queue.pop_front() {
-            //println!("Assumptions being explored: {:?}", assumptions);
 
             if stop.load(std::sync::atomic::Ordering::Relaxed) {
                 return;
