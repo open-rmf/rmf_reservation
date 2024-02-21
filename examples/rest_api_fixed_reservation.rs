@@ -5,8 +5,10 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use rmf_reservations::{
+    cost_function::static_cost::StaticCost,
+    database::{FixedTimeReservationSystem, Ticket},
     AsyncReservationSystem, CostFunction, ReservationParameters, ReservationRequest,
-    ReservationVoucher, database::{FixedTimeReservationSystem, Ticket}, cost_function::static_cost::StaticCost,
+    ReservationVoucher,
 };
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, sync::Arc};
@@ -16,7 +18,7 @@ use tokio::sync::RwLock;
 #[derive(Deserialize)]
 struct JSONReservationRequest {
     choices: Vec<ReservationParameters>,
-    costs: Vec<f64>
+    costs: Vec<f64>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -30,7 +32,6 @@ enum JSONReservationResponse {
     Error(String),
 }
 
-
 #[axum::debug_handler]
 async fn reserve_item(
     State(reservation_system): State<Arc<RwLock<FixedTimeReservationSystem>>>,
@@ -38,7 +39,8 @@ async fn reserve_item(
 ) -> Json<JSONReservationResponse> {
     let reservations: Vec<_> = payload
         .choices
-        .iter().enumerate()
+        .iter()
+        .enumerate()
         .map(|(idx, parameters)| -> ReservationRequest {
             ReservationRequest {
                 parameters: parameters.clone(),
@@ -80,7 +82,9 @@ async fn main() {
         //"station3".to_string(),
     ];
 
-    let mut reservation_system = Arc::new(RwLock::new(FixedTimeReservationSystem::create_with_resources(resources)));
+    let mut reservation_system = Arc::new(RwLock::new(
+        FixedTimeReservationSystem::create_with_resources(resources),
+    ));
 
     let app = Router::new()
         .route("/reserve", post(reserve_item))

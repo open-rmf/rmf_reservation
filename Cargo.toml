@@ -13,7 +13,6 @@ serde = "1.0.164"
 serde_derive = "1.0.164"
 uuid = { version = "1.4.0", features = ["v4", "fast-rng", "macro-diagnostics"] }
 pathfinding = "4.3.1"
-#mapf = { path = "/usr/local/google/home/arjoc/ws/mapf/mapf", features = ["serde"] }
 ordered-float = "3.9.1"
 term-table = "1.3.2"
 rand = "0.8.5"
@@ -32,4 +31,5 @@ axum-server = "0.5.1"
 serde_json = "1.0.99"
 serde_yaml = "0.9"
 rmf_site_format = { git = "https://github.com/open-rmf/rmf_site.git", rev = "53c2eff7c2806b92cf584019997e720b2fb22e92"}
+mapf = { git = "https://github.com/open-rmf/mapf.git", rev = "e1682fd", features = ["serde"] }
 

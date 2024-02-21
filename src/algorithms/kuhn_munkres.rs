@@ -120,21 +120,21 @@ impl Weights<OrderedFloat<f64>> for ReservationsKuhnMunkres {
 
     fn at(&self, row: usize, col: usize) -> OrderedFloat<f64> {
         let Ok(row) = self.request_mask.remap(row) else {
-            return OrderedFloat(- self.max_cost - 1.0)
+            return OrderedFloat(-self.max_cost - 1.0);
         };
 
         let Ok(col) = self.resource_mask.remap(col) else {
-            return OrderedFloat(- self.max_cost - 1.0)
+            return OrderedFloat(-self.max_cost - 1.0);
         };
 
         // Rows are the request that was made by the agent
         let Some(requests) = self.requests.get(&row) else {
-            return OrderedFloat(- self.max_cost - 1.0);
+            return OrderedFloat(-self.max_cost - 1.0);
         };
 
         // Columns are the resources
         let Some(&request_idx) = self.request_reservation_idx.get(&(row, col)) else {
-            return OrderedFloat(- self.max_cost - 1.0);
+            return OrderedFloat(-self.max_cost - 1.0);
         };
 
         // TODO(arjo) handle different costs based on allocation. For now pass rubbish.
@@ -201,7 +201,7 @@ impl ReservationsKuhnMunkres {
         for r_id in 0..request.len() {
             let resource = request[r_id].parameters.resource_name.clone();
             let Some(&resource_id) = self.resource_name_to_id.get(&resource) else {
-                return None; 
+                return None;
             };
             self.request_reservation_idx
                 .insert((req_id, resource_id), r_id);
@@ -251,13 +251,13 @@ impl ReservationsKuhnMunkres {
         for (request_id, satisfied_resource) in positive_constraints {
             if let Some(reservations) = self.requests.get(&request_id) {
                 let Some(res) = reservations.get(satisfied_resource) else {
-                        continue;
-                    };
+                    continue;
+                };
                 request_mask.push(request_id);
 
                 let Some(&res) = self.resource_name_to_id.get(&res.parameters.resource_name) else {
-                        continue;
-                    };
+                    continue;
+                };
                 resource_mask.push(res);
             }
         }
@@ -274,21 +274,21 @@ impl ReservationsKuhnMunkres {
 
         for row_idx in 0..results.len() {
             let Some(req) = self.requests.get(&row_idx) else {
-                    continue;
-                };
+                continue;
+            };
             let col_idx = results[row_idx];
             let Ok(row_idx) = self.request_mask.remap(row_idx) else {
-                    continue;
-                };
+                continue;
+            };
             let Ok(col_idx) = self.resource_mask.remap(col_idx) else {
-                    continue;
-                };
+                continue;
+            };
             let Some(req_id) = self.request_reservation_idx.get(&(row_idx, col_idx)) else {
-                    // Failed to allocate any valid option
-                    // System is probably over subscribed
-                    res.insert(row_idx, None);
-                    continue;
-                };
+                // Failed to allocate any valid option
+                // System is probably over subscribed
+                res.insert(row_idx, None);
+                continue;
+            };
             res.insert(row_idx, Some(*req_id));
         }
         (-cost, res)

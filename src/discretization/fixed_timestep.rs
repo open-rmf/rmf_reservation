@@ -1,15 +1,15 @@
 use std::{collections::HashMap, sync::Arc};
 
-use chrono::{Duration, Utc, DateTime};
+use chrono::{DateTime, Duration, Utc};
 
-use crate::{StartTimeRange, ReservationRequest, cost_function::static_cost::StaticCost};
+use crate::{cost_function::static_cost::StaticCost, ReservationRequest, StartTimeRange};
 
 use super::DescretizationStrategy;
 
 pub struct FixedTimestamp {
     remapping: HashMap<(usize, usize), (usize, usize)>,
     timestep: Duration,
-    latest: chrono::DateTime<Utc>
+    latest: chrono::DateTime<Utc>,
 }
 
 impl FixedTimestamp {
@@ -17,44 +17,51 @@ impl FixedTimestamp {
         Self {
             remapping: HashMap::new(),
             timestep,
-            latest
+            latest,
         }
     }
 }
 
 impl DescretizationStrategy for FixedTimestamp {
-    fn discretize(&mut self, requests: &Vec<Vec<crate::ReservationRequest>>) -> Vec<Vec<crate::ReservationRequest>> {
+    fn discretize(
+        &mut self,
+        requests: &Vec<Vec<crate::ReservationRequest>>,
+    ) -> Vec<Vec<crate::ReservationRequest>> {
         let mut result = vec![];
-        
+
         for request_id in 0..requests.len() {
             let mut broken_down_options = vec![];
             for res in 0..requests[request_id].len() {
-                let earliest = if let Some(earliest)= requests[request_id][res].parameters.start_time.earliest_start {
+                let earliest = if let Some(earliest) = requests[request_id][res]
+                    .parameters
+                    .start_time
+                    .earliest_start
+                {
                     earliest
-                }
-                else {
+                } else {
                     Utc::now()
                 };
 
-                let latest = if let Some(latest)= requests[request_id][res].parameters.start_time.latest_start {
+                let latest = if let Some(latest) =
+                    requests[request_id][res].parameters.start_time.latest_start
+                {
                     latest
-                }
-                else {
+                } else {
                     self.latest
                 };
 
                 let mut current_time = earliest;
 
-                while  current_time != latest {
-                    let mut params  = requests[request_id][res].parameters.clone();
+                while current_time != latest {
+                    let mut params = requests[request_id][res].parameters.clone();
                     params.start_time = StartTimeRange::exactly_at(&current_time);
-                    let cost = requests[request_id][res].cost_function.cost(&params, &current_time);
-                    
+                    let cost = requests[request_id][res]
+                        .cost_function
+                        .cost(&params, &current_time);
+
                     let new_reservation = ReservationRequest {
                         parameters: params,
-                        cost_function: Arc::new(StaticCost::new(
-                            cost
-                        ))
+                        cost_function: Arc::new(StaticCost::new(cost)),
                     };
                     broken_down_options.push(new_reservation);
                     current_time += self.timestep;

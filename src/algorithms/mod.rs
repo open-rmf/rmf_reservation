@@ -1,8 +1,16 @@
-use std::{collections::HashMap, sync::{Arc, Mutex, mpsc::{Sender, self}, atomic::AtomicBool}, thread::{self, JoinHandle}};
 use std::sync::mpsc::Receiver;
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::AtomicBool,
+        mpsc::{self, Sender},
+        Arc, Mutex,
+    },
+    thread::{self, JoinHandle},
+};
 
-use chrono::Duration;
 use crate::database::Snapshot;
+use chrono::Duration;
 
 use self::{greedy_solver::Problem, sat_flexible_time_model::Assignment};
 
@@ -18,26 +26,25 @@ pub enum AlgorithmState {
     OptimalSolution(HashMap<usize, usize>),
     PartialSolution(HashMap<usize, usize>, f64),
     NotFound,
-    UnSolveable
+    UnSolveable,
 }
 pub(crate) struct AlgorithmPool<P> {
     proposed_solution: AlgorithmState,
     running: Arc<AtomicBool>,
-    algorithms: Vec<Arc<dyn SolverAlgorithm<P> + Send +Sync>>,
+    algorithms: Vec<Arc<dyn SolverAlgorithm<P> + Send + Sync>>,
 }
 
 impl<P> Default for AlgorithmPool<P> {
     fn default() -> Self {
-        Self { 
-            proposed_solution: AlgorithmState::NotFound, 
+        Self {
+            proposed_solution: AlgorithmState::NotFound,
             running: Arc::new(AtomicBool::new(false)),
             algorithms: Vec::new(),
         }
     }
 }
 
-impl<P: Clone + std::marker::Send +'static> AlgorithmPool<P> {
-
+impl<P: Clone + std::marker::Send + 'static> AlgorithmPool<P> {
     fn clean_solver(&self) -> Self {
         let mut res = Self::default();
         res.algorithms = self.algorithms.clone();
@@ -59,7 +66,6 @@ impl<P: Clone + std::marker::Send +'static> AlgorithmPool<P> {
     }
 
     fn solve(&mut self, problem: P, mtx: Arc<Mutex<AlgorithmState>>) {
-
         let (sender, rx) = mpsc::channel();
         let mut join_handles = vec![];
         for algorithm in &self.algorithms {
@@ -68,89 +74,81 @@ impl<P: Clone + std::marker::Send +'static> AlgorithmPool<P> {
             let stop = self.running.clone();
             //TODO(arjoc) unessecary clone
             let p = problem.clone();
-            join_handles.push(thread::spawn(move || {
-                alg.iterative_solve(tx, stop, p)
-            }));
+            join_handles.push(thread::spawn(move || alg.iterative_solve(tx, stop, p)));
         }
-        'finished:
-        loop {
+        'finished: loop {
             'solve: {
-            let proposed_solution = rx.recv_timeout(std::time::Duration::from_millis(500));
-            let Ok(soln) = proposed_solution else {
-                if let Err(error) = proposed_solution {
-                    match error {
-                        mpsc::RecvTimeoutError::Timeout => {
-                            if self.running.load(std::sync::atomic::Ordering::Relaxed) {
+                let proposed_solution = rx.recv_timeout(std::time::Duration::from_millis(500));
+                let Ok(soln) = proposed_solution else {
+                    if let Err(error) = proposed_solution {
+                        match error {
+                            mpsc::RecvTimeoutError::Timeout => {
+                                if self.running.load(std::sync::atomic::Ordering::Relaxed) {
+                                    break 'finished;
+                                }
+                                break 'solve;
+                            }
+                            mpsc::RecvTimeoutError::Disconnected => {
+                                self.stop();
                                 break 'finished;
                             }
-                            break 'solve;
-                        }
-                        mpsc::RecvTimeoutError::Disconnected => {
-                            self.stop();
-                            break 'finished;
                         }
                     }
-                }
-                //This is unreachable
-                // TODO(Arjo): Refactor into match
-                return;
-            };
-        
+                    //This is unreachable
+                    // TODO(Arjo): Refactor into match
+                    return;
+                };
 
-            if let AlgorithmState::PartialSolution(prev_soln, cost) = &self.proposed_solution {
-                if let AlgorithmState::PartialSolution(_, cost2) = soln {
-                    if cost2 < *cost {
+                if let AlgorithmState::PartialSolution(prev_soln, cost) = &self.proposed_solution {
+                    if let AlgorithmState::PartialSolution(_, cost2) = soln {
+                        if cost2 < *cost {
+                            self.proposed_solution = soln;
+                        }
+                    } else {
                         self.proposed_solution = soln;
                     }
-                }
-                else {
+                } else {
                     self.proposed_solution = soln;
                 }
-            }
-            else {
-                self.proposed_solution = soln;
-            }
 
-           
-            *mtx.lock().unwrap() = self.proposed_solution.clone();
+                *mtx.lock().unwrap() = self.proposed_solution.clone();
 
-            if !self.should_continue() {
-                self.stop();
+                if !self.should_continue() {
+                    self.stop();
+                }
             }
-        }
         }
 
         for handle in join_handles {
             handle.join();
         }
-
     }
 
     fn stop(&mut self) {
-        self.running.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
 struct ExecutionContext {
     join_handle: JoinHandle<()>,
-    stop_handle: Arc<AtomicBool>
+    stop_handle: Arc<AtomicBool>,
 }
 
 pub(crate) struct AsyncExecutor<P, T> {
     execution_context: Option<Arc<Mutex<ExecutionContext>>>,
     algorithm_pool_template: AlgorithmPool<P>,
     solution: Arc<Mutex<AlgorithmState>>,
-    metadata: T
+    metadata: T,
 }
 
-impl<P: Clone + std::marker::Send + 'static, T: Default + Clone> AsyncExecutor<P,T> {
-
+impl<P: Clone + std::marker::Send + 'static, T: Default + Clone> AsyncExecutor<P, T> {
     pub(crate) fn init(alg_pool: AlgorithmPool<P>) -> Self {
         Self {
             execution_context: None,
             algorithm_pool_template: alg_pool,
             solution: Arc::new(Mutex::new(AlgorithmState::NotFound)),
-            metadata: T::default()
+            metadata: T::default(),
         }
     }
     pub(crate) fn attempt_solve(&mut self, snapshot: Snapshot<P, T>) {
@@ -161,8 +159,10 @@ impl<P: Clone + std::marker::Send + 'static, T: Default + Clone> AsyncExecutor<P
                 return;
             };
             if !context.join_handle.is_finished() {
-                context.stop_handle.store(true, std::sync::atomic::Ordering::Relaxed);
-            } 
+                context
+                    .stop_handle
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
         }
 
         let mut solver = self.algorithm_pool_template.clean_solver();
@@ -170,23 +170,23 @@ impl<P: Clone + std::marker::Send + 'static, T: Default + Clone> AsyncExecutor<P
         let solulu = self.solution.clone();
         let solver_thread = std::thread::spawn(move || {
             solver.solve(snapshot.problem, solulu);
-        }
-        );
-        self.execution_context = Some(Arc::new(
-            Mutex::new (
-            ExecutionContext { 
-                join_handle: solver_thread, 
-                stop_handle: stop_handle }
-            )));
-        
+        });
+        self.execution_context = Some(Arc::new(Mutex::new(ExecutionContext {
+            join_handle: solver_thread,
+            stop_handle: stop_handle,
+        })));
     }
 
-    pub(crate) fn retrieve_best_fixed_time_solution_and_stop(&mut self) -> Option<HashMap<usize, usize>> {
-        
+    pub(crate) fn retrieve_best_fixed_time_solution_and_stop(
+        &mut self,
+    ) -> Option<HashMap<usize, usize>> {
         if let Some(context) = &self.execution_context {
-            context.lock().unwrap().stop_handle.store(false, std::sync::atomic::Ordering::Relaxed); 
-        }
-        else {
+            context
+                .lock()
+                .unwrap()
+                .stop_handle
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+        } else {
             return None;
         }
 
@@ -195,39 +195,53 @@ impl<P: Clone + std::marker::Send + 'static, T: Default + Clone> AsyncExecutor<P
             AlgorithmState::OptimalSolution(solution) => return Some(solution.clone()),
             AlgorithmState::PartialSolution(solution, _) => return Some(solution.clone()),
             AlgorithmState::FeasibleScheduleSolution(_) => return None,
-            _=> {}
+            _ => {}
         };
-        
 
-        return None; 
+        return None;
     }
 
-    pub(crate) fn retrieve_feasible_schedule(&mut self) -> Option<(HashMap<String, Vec<Assignment>>, T)> {
+    pub(crate) fn retrieve_feasible_schedule(
+        &mut self,
+    ) -> Option<(HashMap<String, Vec<Assignment>>, T)> {
         if let Some(context) = &self.execution_context {
-            context.lock().unwrap().stop_handle.store(false, std::sync::atomic::Ordering::Relaxed); 
-        }
-        else {
+            context
+                .lock()
+                .unwrap()
+                .stop_handle
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+        } else {
             return None;
         }
 
         let data = self.solution.lock().unwrap().clone();
         match &data {
-            AlgorithmState::FeasibleScheduleSolution(solution) => return Some((solution.clone(), self.metadata.clone())),
-            _=> {}
-        };  
+            AlgorithmState::FeasibleScheduleSolution(solution) => {
+                return Some((solution.clone(), self.metadata.clone()))
+            }
+            _ => {}
+        };
 
-        return None; 
+        return None;
     }
 }
 
 pub trait SolverAlgorithm<P> {
-    fn iterative_solve(&self, result_channel: Sender<AlgorithmState>, stop: Arc<AtomicBool>, problem: P);
+    fn iterative_solve(
+        &self,
+        result_channel: Sender<AlgorithmState>,
+        stop: Arc<AtomicBool>,
+        problem: P,
+    );
 }
 
 #[cfg(test)]
 #[test]
 fn test_multisolver_algorithm_pool() {
-    use crate::{algorithms::greedy_solver::{GreedySolver, ConflictTracker}, scenario_generation::generate_test_scenario_with_known_best};
+    use crate::{
+        algorithms::greedy_solver::{ConflictTracker, GreedySolver},
+        scenario_generation::generate_test_scenario_with_known_best,
+    };
 
     use self::sat::SATSolver;
 

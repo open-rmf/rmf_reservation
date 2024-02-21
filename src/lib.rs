@@ -162,21 +162,17 @@ impl ReservationRequest {
 
     /// Check if the current request has to always be after the previous request.
     pub fn is_always_after(&self, alternative: &ReservationParameters) -> bool {
-        if let Some(earliest) = self.parameters.start_time.earliest_start 
-        {
+        if let Some(earliest) = self.parameters.start_time.earliest_start {
             if let Some(duration_alt) = alternative.duration {
                 if let Some(alt_latest_start) = alternative.start_time.latest_start {
                     alt_latest_start < earliest
-                }
-                else {
+                } else {
                     false
                 }
-            }
-            else {
+            } else {
                 false
             }
-        }
-        else {
+        } else {
             false
         }
     }

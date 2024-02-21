@@ -187,12 +187,11 @@ impl Robot {
                     self.last_parked = current_time;
                     println!("At time {:?} robot {:?} is parked", current_time, self.id);
 
-                    let Ok(voucher) =
-                        robot_sched.request_charge_at(
-                            self.last_parked + WORK_DURATION,
-                            self.last_parked + MAX_WORK_DURATION, 
-                            CHARGE_DURATION) else 
-                    {
+                    let Ok(voucher) = robot_sched.request_charge_at(
+                        self.last_parked + WORK_DURATION,
+                        self.last_parked + MAX_WORK_DURATION,
+                        CHARGE_DURATION,
+                    ) else {
                         panic!("Failed to get voucher");
                     };
                     self.voucher = Some(voucher);
@@ -202,9 +201,9 @@ impl Robot {
                 if self.voucher.is_none() {
                     let Ok(voucher) = robot_sched.request_charge_at(
                         self.last_parked + WORK_DURATION,
-                        self.last_parked + MAX_WORK_DURATION, 
-                        CHARGE_DURATION) else 
-                    {
+                        self.last_parked + MAX_WORK_DURATION,
+                        CHARGE_DURATION,
+                    ) else {
                         panic!("Failed to get voucher");
                     };
                     println!("Robot {:?} requested reservation.", self.id);
@@ -213,8 +212,7 @@ impl Robot {
                 }
                 if current_time > self.last_parked + WORK_DURATION {
                     println!("Robot {:?} move", self.id);
-                    let Some(voucher) = self.voucher.clone() 
-                    else {
+                    let Some(voucher) = self.voucher.clone() else {
                         panic!("No voucher")
                     };
                     let Ok(claim) = robot_sched.claim(voucher).await else {

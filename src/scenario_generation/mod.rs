@@ -1,9 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
-use chrono::{Duration, Utc, TimeZone};
+use chrono::{Duration, TimeZone, Utc};
 use rand::Rng;
 
-use crate::{ReservationRequest, ReservationSchedule, cost_function::static_cost::StaticCost};
+use crate::{cost_function::static_cost::StaticCost, ReservationRequest, ReservationSchedule};
 
 // TODO(arjo) there is bug in this that generates rubbish occassionally.
 pub fn generate_test_scenario_with_known_best(
@@ -39,7 +39,7 @@ pub fn generate_test_scenario_with_known_best(
                 cost_function: Arc::new(StaticCost::new(1.0)),
             };
 
-            let Some(schedule )= reservations_schedule.get_mut(res) else {
+            let Some(schedule) = reservations_schedule.get_mut(res) else {
                 panic!("Should never get here");
             };
             schedule.insert((i, 0), Some(duration), last_start_time);
@@ -90,10 +90,8 @@ pub fn generate_test_scenario_with_known_best(
     (results_vec, resources)
 }
 
-
-
 pub fn save_scenario_assume_static_cost(
     requests: &Vec<Vec<ReservationRequest>>,
-    reservation: &Vec<String>) {
-    
+    reservation: &Vec<String>,
+) {
 }

@@ -90,9 +90,8 @@ impl WaitPointSystem {
         Err("No solution found".to_string())
     }
 
-    // TODO(arjoc) make 
-    pub fn block_waitpoints(&mut self, wait_points: &Vec<String>) -> Result<(), &str>
-    {
+    // TODO(arjoc) make
+    pub fn block_waitpoints(&mut self, wait_points: &Vec<String>) -> Result<(), &str> {
         for wait_point in wait_points {
             if let Some(mut index) = self.wait_points.get_mut(wait_point) {
                 if index.len() > 0 {
@@ -102,12 +101,17 @@ impl WaitPointSystem {
                     time: None,
                     uuid: Uuid::new_v4().to_string(),
                 });
-            }
-            else {
-                self.wait_points.insert(wait_point.clone(), VecDeque::from_iter([WaitPointInfo {
-                    time: None,
-                    uuid: Uuid::new_v4().to_string(), 
-                }].into_iter()));
+            } else {
+                self.wait_points.insert(
+                    wait_point.clone(),
+                    VecDeque::from_iter(
+                        [WaitPointInfo {
+                            time: None,
+                            uuid: Uuid::new_v4().to_string(),
+                        }]
+                        .into_iter(),
+                    ),
+                );
             }
         }
         Ok(())
@@ -130,8 +134,7 @@ impl WaitPointSystem {
         }
     }
 
-    pub fn flush_until(&mut self, time: &DateTime<Utc>) 
-    {
+    pub fn flush_until(&mut self, time: &DateTime<Utc>) {
         for (_, queue) in self.wait_points.iter_mut() {
             while let Some(qitem) = queue.front() {
                 if qitem.time == None {
@@ -185,12 +188,11 @@ fn test_waitpoint() {
     assert_eq!(result.clone().unwrap().selected_index, 0usize);
 
     let claim_time = test_time(5);
-    let result1 =
-        wait_point_system.release_waitpoint_at_time( &wp1, &claim_time);
+    let result1 = wait_point_system.release_waitpoint_at_time(&wp1, &claim_time);
     assert!(result1.is_ok());
 
     // Attempt invalid request
-    let result1 = wait_point_system.release_waitpoint_at_time( &wp2, &claim_time);
+    let result1 = wait_point_system.release_waitpoint_at_time(&wp2, &claim_time);
     assert!(result1.is_err());
 
     // Try again, we should get the same spot as we arrive early.

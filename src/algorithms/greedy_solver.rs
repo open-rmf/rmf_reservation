@@ -4,11 +4,11 @@ use std::{
     collections::{BTreeMap, BinaryHeap, HashMap, HashSet},
     hash::{self, Hash},
     ops::Bound,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{atomic::AtomicBool, Arc},
 };
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use fnv::{FnvBuildHasher, FnvHashSet, FnvHashMap};
+use fnv::{FnvBuildHasher, FnvHashMap, FnvHashSet};
 use ordered_float::OrderedFloat;
 use rand::Rng;
 
@@ -56,7 +56,7 @@ impl ConflictTracker {
         for r_id in 0..request.len() {
             let resource = request[r_id].parameters.resource_name.clone();
             let Some(&resource_id) = self.resource_name_to_id.get(&resource) else {
-                return None; 
+                return None;
             };
             self.request_reservation_idx
                 .insert((req_id, resource_id), r_id);
@@ -282,8 +282,10 @@ pub struct Problem {
 }
 
 impl Problem {
-
-    pub fn get_original_serviced_request(&self, solution: (usize, usize)) -> Option<(usize, usize)> {
+    pub fn get_original_serviced_request(
+        &self,
+        solution: (usize, usize),
+    ) -> Option<(usize, usize)> {
         self.get_original_serviced_request(solution)
     }
     pub fn debug_print(&self) {
@@ -415,8 +417,9 @@ impl Problem {
 
             let Some(alt) = selected_alt else {
                 // back track and find banned groups
-                let mut starvation_group: HashSet<(usize, usize), FnvBuildHasher> = fnv::FnvHashSet::default();
-                for alt in  0..res.len() {
+                let mut starvation_group: HashSet<(usize, usize), FnvBuildHasher> =
+                    fnv::FnvHashSet::default();
+                for alt in 0..res.len() {
                     let resource = &self.id_to_res[&(*req_id, alt)];
                     let Some(idx) = backtracker.get(resource) else {
                         continue;
@@ -425,8 +428,12 @@ impl Problem {
                 }
 
                 //println!("Got starvation group {:?}", starvation_group);
-                starvation_sets.insert(StarvationGroup{ positive: starvation_group.clone()});
-                starvation_groups_found.push(StarvationGroup{ positive: starvation_group.clone()});
+                starvation_sets.insert(StarvationGroup {
+                    positive: starvation_group.clone(),
+                });
+                starvation_groups_found.push(StarvationGroup {
+                    positive: starvation_group.clone(),
+                });
 
                 unallocated += 1;
                 continue;
@@ -498,7 +505,6 @@ impl Problem {
     ) -> HashSet<(usize, usize)> {
         let mut conflicts = HashSet::new();
 
-
         let mut seen = HashSet::new();
         for req_id1 in 0..allocations.len() {
             let Some(alt_id1) = allocations[req_id1] else {
@@ -524,7 +530,7 @@ impl Problem {
     pub fn solve(
         &self,
         hint: HashMap<usize, usize, FnvBuildHasher>,
-        stop: Arc<AtomicBool>
+        stop: Arc<AtomicBool>,
     ) -> Option<(Solution, Vec<Option<usize>>)> {
         let mut assignments = vec![None; self.fake_requests.len()];
 
@@ -707,15 +713,13 @@ fn test_conflict_checker() {
     let solver = system.generate_literals_and_remap_requests();
     //println!("Generated literals");
     solver.debug_print();
-    let stop = Arc::new(AtomicBool::new(false)); 
+    let stop = Arc::new(AtomicBool::new(false));
     let (solution, _) = solver.solve(FnvHashMap::default(), stop).unwrap();
     println!("{:?}", solution);
     assert!((solution.cost.0 - 8.0).abs() < 1.0);
 }
 
-
 fn validate_optimal_solution(soln: &(Vec<Vec<ReservationRequest>>, Vec<String>)) {}
-
 
 #[cfg(test)]
 #[test]
@@ -740,22 +744,27 @@ fn test_generation() {
     //});
 }
 
-
 pub struct GreedySolver;
 
 impl SolverAlgorithm<Problem> for GreedySolver {
-    fn iterative_solve(&self, result_channel: std::sync::mpsc::Sender<super::AlgorithmState>, stop: Arc<AtomicBool>, problem: Problem) {
+    fn iterative_solve(
+        &self,
+        result_channel: std::sync::mpsc::Sender<super::AlgorithmState>,
+        stop: Arc<AtomicBool>,
+        problem: Problem,
+    ) {
         let hint = FnvHashMap::default();
         let solution = problem.solve(hint, stop);
 
         if let Some((_, solution)) = solution {
-            let solution = solution.iter().enumerate()
+            let solution = solution
+                .iter()
+                .enumerate()
                 .filter(|(_, assignment)| assignment.is_some())
                 .map(|(idx, assignment)| (idx, assignment.unwrap()));
             let solution = HashMap::from_iter(solution);
             result_channel.send(super::AlgorithmState::OptimalSolution(solution));
-        }
-        else {
+        } else {
             result_channel.send(super::AlgorithmState::UnSolveable);
         }
     }

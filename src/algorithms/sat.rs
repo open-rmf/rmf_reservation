@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     hash::Hash,
-    sync::{Arc, mpsc::Sender, atomic::AtomicBool},
+    sync::{atomic::AtomicBool, mpsc::Sender, Arc},
 };
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -46,7 +46,12 @@ struct AssumptionList {
 pub struct SATSolver;
 
 impl SolverAlgorithm<Problem> for SATSolver {
-    fn iterative_solve(&self, result_channel: Sender<AlgorithmState>, stop: Arc<AtomicBool>, problem: Problem) {
+    fn iterative_solve(
+        &self,
+        result_channel: Sender<AlgorithmState>,
+        stop: Arc<AtomicBool>,
+        problem: Problem,
+    ) {
         Self::from_hill_climber_with_optimality_proof(problem, result_channel, stop);
     }
 }
@@ -200,7 +205,11 @@ impl SATSolver {
 
     //================================================================================================================================================
     // This method is the most reliable
-    pub fn from_hill_climber_with_optimality_proof(problem: Problem, sender: Sender<AlgorithmState>, stop: Arc<AtomicBool>) {
+    pub fn from_hill_climber_with_optimality_proof(
+        problem: Problem,
+        sender: Sender<AlgorithmState>,
+        stop: Arc<AtomicBool>,
+    ) {
         let conflicts = problem.get_banned_reservation_combinations();
         let score_cache = problem.score_cache();
         let requests = problem.literals();
@@ -271,7 +280,6 @@ impl SATSolver {
         queue.push_back(no_assumption);
 
         while let Some(mut assumptions) = queue.pop_front() {
-
             if stop.load(std::sync::atomic::Ordering::Relaxed) {
                 return;
             }
@@ -335,7 +343,7 @@ impl SATSolver {
                         };
 
                         if sc < curr_score {
-                            let Some(v) = var_list.get(&(req,i)) else {
+                            let Some(v) = var_list.get(&(req, i)) else {
                                 continue;
                             };
 
@@ -352,7 +360,7 @@ impl SATSolver {
 
                 // Eliminate option
                 for (req, idx) in solution {
-                    let Some(v) = var_list.get(&(req,idx)) else {
+                    let Some(v) = var_list.get(&(req, idx)) else {
                         continue;
                     };
 
@@ -367,12 +375,10 @@ impl SATSolver {
         //println!("Final solution {:?}", best_assignment);
         if best_assignment.len() == 0 {
             sender.send(AlgorithmState::UnSolveable);
-        }
-        else {
+        } else {
             sender.send(AlgorithmState::OptimalSolution(best_assignment.clone()));
         }
     }
-
 }
 
 pub fn generate_sat_devil(
@@ -404,7 +410,7 @@ pub fn generate_sat_devil(
 #[cfg(test)]
 #[test]
 fn test_sat() {
-    use std::{time::SystemTime, sync::mpsc};
+    use std::{sync::mpsc, time::SystemTime};
 
     use fnv::FnvHashMap;
 
@@ -424,7 +430,7 @@ fn test_sat() {
 
     let timer = SystemTime::now();
     let (sender, rx) = mpsc::channel();
-    let stop = Arc::new(AtomicBool::new(false)); 
+    let stop = Arc::new(AtomicBool::new(false));
     SATSolver::from_hill_climber_with_optimality_proof(soln.clone(), sender, stop);
     let optimality_proof_dur = timer.elapsed();
 }
