@@ -232,6 +232,30 @@ impl<ClockType: ClockSource + Clone + std::marker::Send + std::marker::Sync + 's
         if safe_spot.len() == 0 {
             println!("You should include wait spots otherwise, it may lead to deadlock");
         }
+
+        if let Some(rec) = self.record.get(&ticket.get_id()) {
+            
+            if rec.len() == 0 {
+                println!("No alternatives requested, moving to waitpoint only");
+                let wait_points: Vec<_> = safe_spot
+                .iter()
+                .map(|resource| WaitPointRequest {
+                    wait_point: resource.clone(),
+                    time: self.clock_source.now(),
+                })
+                .collect();
+
+                let Ok(ticket) = self.wait_point_system.request_waitpoint(&wait_points) else {
+                    println!("Cloud not allocate to any of: {:?}", safe_spot);
+                    return Err("Could not allocate any wait points. Are we sure there are enough waitpoints available?");
+                };
+                return Ok(ClaimSpot::WaitPermanently(ticket.selected_index));
+            }
+        } 
+        else {
+            return Err("Never issued this ticket before");
+        }
+
         let Some((result, metadata)) = self.async_executor.retrieve_feasible_schedule() else {
             println!("Warning: solver has not concluded any solution yet. Please listen for solutions when ready. For now proceed to wait point.");
             let wait_points: Vec<_> = safe_spot
@@ -248,6 +272,8 @@ impl<ClockType: ClockSource + Clone + std::marker::Send + std::marker::Sync + 's
             return Ok(ClaimSpot::WaitPermanently(ticket.selected_index));
         };
 
+        println!("Schedule: {:?}", result);
+
         let Some(request_idx) = metadata.mapping.get(&ticket.get_id()) else {
             // This hsould never happen therefore panic instead of error.
             panic!("Metadata was malformed");
@@ -257,13 +283,14 @@ impl<ClockType: ClockSource + Clone + std::marker::Send + std::marker::Sync + 's
         for (resource, schedule) in result {
             for item in schedule {
                 if item.id.0 == *request_idx {
-                    // TODO(arjoc) Add some form of time estimator.
-                    if item.start_time > self.clock_source.now() {
+                    println!("Got result {:?}", item);
+                    // TODO(arjoc): Don't hard code
+                    if (item.start_time - self.clock_source.now()).num_seconds().abs() > 20 {
                         let wait_points: Vec<_> = safe_spot
                             .iter()
                             .map(|resource| WaitPointRequest {
                                 wait_point: resource.clone(),
-                                time: self.clock_source.now(), // Get time now?
+                                time: self.clock_source.now(),
                             })
                             .collect();
 
@@ -310,12 +337,9 @@ impl<ClockType: ClockSource + Clone + std::marker::Send + std::marker::Sync + 's
 
     pub fn release_waitpoint(&mut self, wait_point: &String) {
         self.wait_point_system
-            .release_waitpoint_at_time(wait_point, &Utc::now());
+            .release_waitpoint_at_time(wait_point, &self.clock_source.now());
     }
 
-    pub fn set_current_occupied_waitpoints(&mut self, wait_points: &Vec<String>) {
-        self.wait_point_system.block_waitpoints(wait_points);
-    }
 
     fn get_snapshot(
         &mut self,
