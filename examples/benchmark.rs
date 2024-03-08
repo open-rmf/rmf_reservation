@@ -1,3 +1,7 @@
+/// Benchmark
+/// 
+/// This benchmark compares the speed at which we can calculate suboptimal solutions, optimal solutions using the assignment heuristic and
+/// 
 use std::hint;
 use std::io::Write;
 use std::sync::atomic::AtomicBool;
@@ -8,9 +12,10 @@ use std::{fs::OpenOptions, time::SystemTime};
 use fnv::FnvHashMap;
 use rmf_reservations::algorithms::greedy_solver::ConflictTracker;
 use rmf_reservations::algorithms::sat::{generate_sat_devil, SATSolver};
+use rmf_reservations::discretization;
 
 fn main() {
-    for x in 6..10 {
+    for x in (10..50).step_by(10) {
         for _ in 0..100 {
             let (requests, resources) = generate_sat_devil(x, x - 2);
             //generate_test_scenario_with_known_best(5, 10, x);
@@ -24,13 +29,11 @@ fn main() {
 
             let timer = SystemTime::now();
 
-            let (sender, rx) = mpsc::channel();
-            let stop = Arc::new(AtomicBool::new(false));
-            SATSolver::from_hill_climber_with_optimality_proof(soln.clone(), sender, stop);
+            SATSolver::without_optimality_check(soln.clone());
             let optimality_proof_dur = timer.elapsed();
 
             let timer = SystemTime::now();
-            //SATSolver::from_hill_climber(soln.clone());
+            SATSolver::from_hill_climber(soln.clone());
             let brute_force_proof_dur = timer.elapsed();
 
             let hint = FnvHashMap::default();

@@ -16,7 +16,7 @@ use super::{AlgorithmState, SolverAlgorithm};
 
 #[derive(Debug, Clone)]
 pub struct Problem {
-    pub(crate) requests: Vec<Vec<ReservationRequest>>,
+    pub requests: Vec<Vec<ReservationRequest>>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +53,7 @@ fn check_consistency(assignments: &Vec<Assignment>, problem: &Problem) -> bool {
 }
 
 pub struct SATFlexibleTimeModel<CS: ClockSource + std::marker::Send + std::marker::Sync> {
-    pub(crate) clock_source: CS,
+    pub clock_source: CS,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -255,14 +255,6 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                         // ij cannot be after km
                         formula.add_clause(&[Lit::from_var(*X_kmij, false)]);
                     }
-
-                    // Note: PRobably can be removed....as it can be inferred
-                    //if alt_ij_original.is_always_after(&alt_km_original.parameters) {
-                    //    formula.add_clause(&[Lit::from_var(*X_kmij, false)]);
-                    //}
-                    //if alt_km_original.is_always_after(&alt_ij_original.parameters) {
-                    //    formula.add_clause(&[Lit::from_var(*X_ijkm, false)]);
-                    //}
                 }
             }
         }
@@ -353,7 +345,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                 }
             }
 
-            println!("Schedule: {:?}", schedules);
+            //println!("Schedule: {:?}", schedules);
 
             let mut learned_clauses = vec![];
             let mut ok = true;

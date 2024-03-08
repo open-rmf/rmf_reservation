@@ -57,6 +57,68 @@ impl SolverAlgorithm<Problem> for SATSolver {
 }
 
 impl SATSolver {
+    /// Set up the problem and solve it without any optimality check.
+    pub fn without_optimality_check(problem: Problem) {
+        let conflicts = problem.get_banned_reservation_combinations();
+        let score_cache = problem.score_cache();
+        let requests = problem.literals();
+
+        let mut idx = 0usize;
+        let mut var_list = HashMap::new();
+        let mut idx_to_assignment = HashMap::new();
+
+        let mut formula = varisat::CnfFormula::new();
+        // Convert to CNF
+        for (request, num_alt) in requests {
+            let mut options = vec![];
+            for i in 0..num_alt {
+                idx += 1;
+                let v = varisat::Var::from_index(idx);
+                var_list.insert((request, i), v);
+                idx_to_assignment.insert(idx, (request, i));
+                options.push(v);
+            }
+
+            // These clauses state that there can be only one alternative chosen from the reservations
+            let v: Vec<_> = options.iter().map(|v| Lit::from_var(*v, true)).collect();
+            formula.add_clause(v.as_slice());
+
+            for var_pair in options.iter().combinations(2) {
+                if var_pair.len() != 2 {
+                    panic!("Invalid combination found");
+                }
+
+                formula.add_clause(&[
+                    Lit::from_var(*var_pair[0], false),
+                    Lit::from_var(*var_pair[1], false),
+                ]);
+            }
+        }
+
+        // These clauses identify overlapping reservations
+        for (key, conflicts) in conflicts.iter() {
+            let Some(v1) = var_list.get(&key) else {
+                continue;
+            };
+
+            for conflict in conflicts {
+                if key == conflict {
+                    continue;
+                }
+
+                let Some(v2) = var_list.get(conflict) else {
+                    continue;
+                };
+
+                formula.add_clause(&[Lit::from_var(*v1, false), Lit::from_var(*v2, false)]);
+            }
+        }
+
+        let mut solver = Solver::new();
+        solver.add_formula(&formula);
+        solver.solve();
+    }
+
     pub fn from_hill_climber(problem: Problem) {
         let conflicts = problem.get_banned_reservation_combinations();
         let score_cache = problem.score_cache();

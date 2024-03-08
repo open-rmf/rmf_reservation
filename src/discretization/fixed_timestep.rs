@@ -2,27 +2,32 @@ use std::{collections::HashMap, sync::Arc};
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::{cost_function::static_cost::StaticCost, ReservationRequest, StartTimeRange};
+use crate::{
+    cost_function::static_cost::StaticCost, database::ClockSource, ReservationRequest,
+    StartTimeRange,
+};
 
 use super::DescretizationStrategy;
 
-pub struct FixedTimestamp {
+pub struct FixedTimestep<C: ClockSource> {
     remapping: HashMap<(usize, usize), (usize, usize)>,
     timestep: Duration,
     latest: chrono::DateTime<Utc>,
+    clock_source: C,
 }
 
-impl FixedTimestamp {
-    fn new(timestep: Duration, latest: chrono::DateTime<Utc>) -> Self {
+impl<C: ClockSource> FixedTimestep<C> {
+    pub fn new(timestep: Duration, latest: chrono::DateTime<Utc>, clock_source: C) -> Self {
         Self {
             remapping: HashMap::new(),
             timestep,
             latest,
+            clock_source,
         }
     }
 }
 
-impl DescretizationStrategy for FixedTimestamp {
+impl<C: ClockSource> DescretizationStrategy for FixedTimestep<C> {
     fn discretize(
         &mut self,
         requests: &Vec<Vec<crate::ReservationRequest>>,
@@ -39,7 +44,7 @@ impl DescretizationStrategy for FixedTimestamp {
                 {
                     earliest
                 } else {
-                    Utc::now()
+                    self.clock_source.now()
                 };
 
                 let latest = if let Some(latest) =
@@ -65,6 +70,8 @@ impl DescretizationStrategy for FixedTimestamp {
                     };
                     broken_down_options.push(new_reservation);
                     current_time += self.timestep;
+
+                    self.remapping.
                 }
             }
             result.push(broken_down_options);

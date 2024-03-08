@@ -234,16 +234,15 @@ impl<ClockType: ClockSource + Clone + std::marker::Send + std::marker::Sync + 's
         }
 
         if let Some(rec) = self.record.get(&ticket.get_id()) {
-            
             if rec.len() == 0 {
                 println!("No alternatives requested, moving to waitpoint only");
                 let wait_points: Vec<_> = safe_spot
-                .iter()
-                .map(|resource| WaitPointRequest {
-                    wait_point: resource.clone(),
-                    time: self.clock_source.now(),
-                })
-                .collect();
+                    .iter()
+                    .map(|resource| WaitPointRequest {
+                        wait_point: resource.clone(),
+                        time: self.clock_source.now(),
+                    })
+                    .collect();
 
                 let Ok(ticket) = self.wait_point_system.request_waitpoint(&wait_points) else {
                     println!("Cloud not allocate to any of: {:?}", safe_spot);
@@ -251,8 +250,7 @@ impl<ClockType: ClockSource + Clone + std::marker::Send + std::marker::Sync + 's
                 };
                 return Ok(ClaimSpot::WaitPermanently(ticket.selected_index));
             }
-        } 
-        else {
+        } else {
             return Err("Never issued this ticket before");
         }
 
@@ -285,7 +283,11 @@ impl<ClockType: ClockSource + Clone + std::marker::Send + std::marker::Sync + 's
                 if item.id.0 == *request_idx {
                     println!("Got result {:?}", item);
                     // TODO(arjoc): Don't hard code
-                    if (item.start_time - self.clock_source.now()).num_seconds().abs() > 20 {
+                    if (item.start_time - self.clock_source.now())
+                        .num_seconds()
+                        .abs()
+                        > 20
+                    {
                         let wait_points: Vec<_> = safe_spot
                             .iter()
                             .map(|resource| WaitPointRequest {
@@ -340,7 +342,6 @@ impl<ClockType: ClockSource + Clone + std::marker::Send + std::marker::Sync + 's
             .release_waitpoint_at_time(wait_point, &self.clock_source.now());
     }
 
-
     fn get_snapshot(
         &mut self,
     ) -> Snapshot<
@@ -349,6 +350,9 @@ impl<ClockType: ClockSource + Clone + std::marker::Send + std::marker::Sync + 's
     > {
         let mut requests = vec![];
         let mut mapping = HashMap::<usize, usize>::new();
+
+        println!("Sending: {:?}", self.record);
+
         for (key, alts) in &self.record {
             mapping.insert(requests.len(), *key);
             if let Some(reservation_state) = self.claims.get(&key) {
