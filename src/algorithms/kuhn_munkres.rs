@@ -97,7 +97,7 @@ fn test_sparse_axis_masker() {
 /// is in a fire emergency system where for instance robots.
 /// This class also comes with a masker that allows you to add simple constraints while
 /// solving an optimization.
-struct ReservationsKuhnMunkres {
+pub struct ReservationsKuhnMunkres {
     resources: Vec<String>,
     resource_name_to_id: HashMap<String, usize>,
     requests: HashMap<usize, Vec<ReservationRequest>>,

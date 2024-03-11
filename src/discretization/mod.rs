@@ -12,5 +12,5 @@ pub trait DescretizationStrategy {
     ) -> Vec<Vec<ReservationRequest>>;
 
     /// Remap the new problem to the old problem.
-    fn remap(&self, ticket_id: &(usize, usize)) -> (usize, usize);
+    fn remap(&self, ticket_id: &(usize, usize)) -> Option<(usize, usize)>;
 }

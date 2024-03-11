@@ -21,6 +21,17 @@ use rmf_reservations::ReservationParameters;
 use rmf_reservations::ReservationRequest;
 use rmf_reservations::StartTimeRange;
 
+#[derive(Default, Clone)]
+struct FakeClock;
+
+impl ClockSource for FakeClock {
+    fn now(&self) -> chrono::DateTime<chrono::prelude::Utc> {
+        let time = Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap();
+        return time;
+    }
+}
+
+
 fn generate_reservation_requests(
     time_range: chrono::Duration,
     alts: usize,
@@ -59,7 +70,7 @@ fn generate_reservation_requests(
     (result, resource)
 }
 
-fn discretize(res: &Vec<Vec<ReservationRequest>>) -> Vec<Vec<ReservationRequest>> {
+fn discretize(res: &Vec<Vec<ReservationRequest>>, clock_source: FakeClock) -> Vec<Vec<ReservationRequest>> {
     let mut latest = Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap();
     for r in res {
         for v in r {
@@ -68,19 +79,10 @@ fn discretize(res: &Vec<Vec<ReservationRequest>>) -> Vec<Vec<ReservationRequest>
             }
         }
     }
-    let mut remapper = FixedTimestep::new(Duration::minutes(10), latest);
+    let mut remapper = FixedTimestep::new(Duration::minutes(10), latest, clock_source);
     remapper.discretize(res)
 }
 
-#[derive(Default, Clone)]
-struct FakeClock;
-
-impl ClockSource for FakeClock {
-    fn now(&self) -> chrono::DateTime<chrono::prelude::Utc> {
-        let time = Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap();
-        return time;
-    }
-}
 
 fn main() {
     //for x in 6..10 {
@@ -93,7 +95,7 @@ fn main() {
 
             //
             let mut system = ConflictTracker::create_with_resources(&resources);
-            let discrete_requests = discretize(&requests);
+            let discrete_requests = discretize(&requests, FakeClock::default());
 
             for req in &discrete_requests {
                 system.request_resources(req.clone());

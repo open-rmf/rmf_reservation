@@ -71,16 +71,15 @@ impl<C: ClockSource> DescretizationStrategy for FixedTimestep<C> {
                     broken_down_options.push(new_reservation);
                     current_time += self.timestep;
 
-                    self.remapping.
+                    self.remapping.insert((result.len(), broken_down_options.len() -1), (request_id, res));
                 }
             }
             result.push(broken_down_options);
         }
-        //self.remapping
         result
     }
 
-    fn remap(&self, ticket_id: &(usize, usize)) -> (usize, usize) {
-        todo!()
+    fn remap(&self, ticket_id: &(usize, usize)) -> Option<(usize, usize)> {
+        self.remapping.get(ticket_id).copied()
     }
 }
