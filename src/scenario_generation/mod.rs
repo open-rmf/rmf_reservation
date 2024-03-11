@@ -89,9 +89,3 @@ pub fn generate_test_scenario_with_known_best(
 
     (results_vec, resources)
 }
-
-pub fn save_scenario_assume_static_cost(
-    requests: &Vec<Vec<ReservationRequest>>,
-    reservation: &Vec<String>,
-) {
-}

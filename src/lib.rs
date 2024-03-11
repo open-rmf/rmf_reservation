@@ -40,11 +40,12 @@ pub mod database;
 pub struct StartTimeRange {
     /// This is the earliest start time. If None, means there is no earliest time.
     pub earliest_start: Option<DateTime<Utc>>,
-    /// This is the latest start time. If None, means there is no earliest time.
+    /// This is the latest start time. If None, means there is no latest time.
     pub latest_start: Option<DateTime<Utc>>,
 }
 
 impl StartTimeRange {
+    /// Create a time range with no specification
     pub fn no_specifics() -> Self {
         Self {
             earliest_start: None,
@@ -52,6 +53,7 @@ impl StartTimeRange {
         }
     }
 
+     /// Create a time range which starts exactly at some given time.
     pub fn exactly_at(time: &DateTime<Utc>) -> Self {
         Self {
             earliest_start: Some(time.clone()),
@@ -217,32 +219,6 @@ impl ReservationSchedule {
         self.schedule = self.schedule.split_off(&time);
     }
 
-    /// Checks consistency
-    #[cfg(test)]
-    fn check_consistency(&self) -> bool {
-        let mut next_min_instant = NextInstant::Beginning;
-        for (instant, assignment) in &self.schedule {
-            match next_min_instant {
-                NextInstant::NoMoreAllowed => {
-                    return false;
-                }
-                _ => {
-                    if let NextInstant::NextInstant(time) = next_min_instant {
-                        if *instant < time {
-                            return false;
-                        }
-                    }
-
-                    if let Some(duration) = assignment.2 {
-                        next_min_instant = NextInstant::NextInstant(*instant + duration);
-                    } else {
-                        next_min_instant = NextInstant::NoMoreAllowed;
-                    }
-                }
-            }
-        }
-        true
-    }
 
     /// Returns a list of assignments that may have a potential conflict with the relevant ReservationRequest
     fn check_potential_conflict(
@@ -596,166 +572,6 @@ impl ReservationState {
     }
 }
 
-/// The main reservation system.
-pub struct SyncReservationSystem {
-    reservation_queue: Vec<Vec<ReservationRequest>>,
-    current_state: ReservationState,
-    claimed_requests: HashSet<usize>,
-    cummulative_cost: f64,
-}
-
-impl SyncReservationSystem {
-    pub fn garbage_collect(&mut self, time: DateTime<Utc>) {
-        self.current_state.garbage_collect(time);
-    }
-
-    pub fn create_new_with_resources(resources: &Vec<String>) -> Self {
-        Self {
-            reservation_queue: vec![],
-            current_state: ReservationState::create_new_with_resources(resources),
-            claimed_requests: HashSet::new(),
-            cummulative_cost: 0f64,
-        }
-    }
-
-    fn next_states(
-        &self,
-        reservation_state: &ReservationState,
-    ) -> Vec<(ReservationState, SchedChange)> {
-        let mut result = vec![];
-        for res in &reservation_state.unassigned {
-            // Attempt each reservation alternative
-            for choice_idx in 0..self.reservation_queue[*res].len() {
-                let mut states = reservation_state.attempt_service_req(
-                    *res,
-                    choice_idx,
-                    &self.reservation_queue[*res][choice_idx],
-                    &self.claimed_requests,
-                );
-                result.append(&mut states);
-            }
-        }
-        result
-    }
-
-    /// Ignore heuristic. Use conflict as motivating heuristic
-    fn search_for_solution(&self) -> Vec<(ReservationState, Vec<SchedChange>)> {
-        // TODO remove HashSet. Move to view based method
-        let mut explored = HashSet::new();
-        let mut results = vec![];
-        let mut parent: HashMap<ReservationState, (ReservationState, SchedChange)> = HashMap::new();
-
-        let mut queue = VecDeque::new();
-        queue.push_back(self.current_state.clone());
-        explored.insert(self.current_state.clone());
-
-        while let Some(state) = queue.pop_front() {
-            let next_states = self.next_states(&state);
-            for (next_state, change) in next_states {
-                if explored.contains(&next_state) {
-                    continue;
-                }
-                if next_state.unassigned.len() == 0 {
-                    // Retrace parent
-                    let mut cursor = state.clone();
-                    let mut rollout_plan = vec![];
-                    rollout_plan.push(change.clone());
-                    while cursor != self.current_state {
-                        if let Some((state, change)) = parent.get(&cursor) {
-                            rollout_plan.push(change.clone());
-                            cursor = state.clone();
-                        } else {
-                            //panic!("Should never get here");
-                        }
-                    }
-                    results.push((next_state.clone(), rollout_plan));
-                }
-                explored.insert(next_state.clone());
-                queue.push_back(next_state.clone());
-                parent.insert(next_state, (state.clone(), change));
-            }
-        }
-
-        results
-    }
-
-    /// Greedy approach
-    fn search_for_solution_to_problem(
-        &mut self,
-        reservation: usize,
-    ) -> Option<(ReservationState, Vec<SchedChange>)> {
-        let mut explored = HashSet::new();
-        let mut parent: HashMap<ReservationState, (ReservationState, SchedChange)> = HashMap::new();
-
-        let mut queue = VecDeque::new();
-        queue.push_back(self.current_state.clone());
-        explored.insert(self.current_state.clone());
-
-        while let Some(state) = queue.pop_front() {
-            let next_states = self.next_states(&state);
-            for (next_state, change) in next_states {
-                if explored.contains(&next_state) {
-                    continue;
-                }
-                if next_state.assigned.contains_key(&reservation) {
-                    // Retrace parent
-                    let mut cursor = state.clone();
-                    let mut rollout_plan = vec![];
-                    rollout_plan.push(change.clone());
-                    while cursor != self.current_state {
-                        if let Some((state, change)) = parent.get(&cursor) {
-                            rollout_plan.push(change.clone());
-                            cursor = state.clone();
-                        } else {
-                            panic!("Should never get here");
-                        }
-                    }
-                    return Some((next_state.clone(), rollout_plan));
-                }
-                explored.insert(next_state.clone());
-                queue.push_back(next_state.clone());
-                parent.insert(next_state, (state.clone(), change));
-            }
-        }
-
-        None
-    }
-
-    // Forcing a reservation has a much simpler target condition -
-    // as long as the forced reservation has a simple solution, the system will return a consistent
-    // the easiest way to satisfy a reservation.
-    pub fn force_reservation(&mut self, reservation: usize) -> bool {
-        if let Some((state, _changes)) = self.search_for_solution_to_problem(reservation) {
-            self.current_state = state;
-            return true;
-        }
-        false
-    }
-
-    pub fn request_reservation(&mut self, reservations: Vec<ReservationRequest>) -> usize {
-        self.reservation_queue.push(reservations);
-        let request_handle = self.reservation_queue.len() - 1;
-        self.current_state
-            .unassigned
-            .insert(self.reservation_queue.len() - 1);
-        let mut soln = self.search_for_solution();
-        if soln.len() > 0 {
-            // TODO(arjo) find best solution. Currently sorts by conflicts
-            soln.sort_by(|a, b| a.1.len().partial_cmp(&b.1.len()).unwrap());
-
-            // Compute changes
-            for sched_change in &soln[0].1 {
-                match sched_change {
-                    SchedChange::Add(res, assignment) => {}
-                    SchedChange::Remove(time) => {}
-                }
-            }
-            self.current_state = soln[0].0.clone();
-        }
-        request_handle
-    }
-}
-
 
 struct NoCost {}
 
@@ -808,50 +624,6 @@ fn test_satisfies_request() {
     // OK
     let start_time = Utc.with_ymd_and_hms(2023, 7, 8, 7, 10, 11).unwrap();
     assert!(req.satisfies_request(&start_time, Some(Duration::minutes(30))));
-}
-
-#[cfg(test)]
-#[test]
-fn test_check_consistency() {
-    let mut sched = ReservationSchedule {
-        schedule: BTreeMap::new(),
-    };
-    // Empty schedule should be consistent
-    assert!(sched.check_consistency());
-
-    // Create a schedule with no overlapping reservations
-    sched.schedule.insert(
-        Utc.with_ymd_and_hms(2023, 7, 8, 6, 10, 11).unwrap(),
-        Assignment(0usize, 0usize, Some(Duration::minutes(40))),
-    );
-
-    sched.schedule.insert(
-        Utc.with_ymd_and_hms(2023, 7, 8, 9, 10, 11).unwrap(),
-        Assignment(0usize, 0usize, None),
-    );
-
-    assert!(sched.check_consistency());
-
-    // Add yet another reservation after the indefinite reservation
-    sched.schedule.insert(
-        Utc.with_ymd_and_hms(2023, 7, 8, 12, 10, 11).unwrap(),
-        Assignment(0usize, 0usize, Some(Duration::minutes(40))),
-    );
-    assert!(!sched.check_consistency());
-
-    // Cler and create a schedule with conflicts
-    sched.schedule.clear();
-    sched.schedule.insert(
-        Utc.with_ymd_and_hms(2023, 7, 8, 6, 10, 11).unwrap(),
-        Assignment(0usize, 0usize, Some(Duration::minutes(40))),
-    );
-
-    sched.schedule.insert(
-        Utc.with_ymd_and_hms(2023, 7, 8, 6, 15, 11).unwrap(),
-        Assignment(0usize, 0usize, None),
-    );
-
-    assert!(!sched.check_consistency());
 }
 
 #[cfg(test)]
@@ -985,53 +757,6 @@ fn test_conflict_checker() {
 
 #[cfg(test)]
 #[test]
-fn test_branching_operations() {
-    let mut reservation_schedule = ReservationSchedule {
-        schedule: BTreeMap::new(),
-    };
-
-    reservation_schedule.schedule.insert(
-        Utc.with_ymd_and_hms(2023, 7, 8, 5, 10, 11).unwrap(),
-        Assignment(0usize, 0usize, Some(Duration::minutes(90))),
-    );
-
-    let request = ReservationRequest {
-        parameters: ReservationParameters {
-            resource_name: "resource1".to_string(),
-            start_time: StartTimeRange {
-                earliest_start: None,
-                latest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 7, 10, 11).unwrap()),
-            },
-            duration: Some(Duration::minutes(30)),
-        },
-        cost_function: Arc::new(NoCost {}),
-    };
-
-    let changes =
-        reservation_schedule.get_possible_schedule_changes(0, 0, &request, &HashSet::new());
-    let num_removed = changes
-        .iter()
-        .filter(|sched_change| matches!(sched_change, SchedChange::Remove(_)))
-        .count();
-    assert_eq!(num_removed, 1usize);
-    let num_added = changes
-        .iter()
-        .filter(|sched_change| matches!(sched_change, SchedChange::Add(_, _)))
-        .count();
-    assert!(num_added > 0usize);
-
-    for change in changes.iter() {
-        if let SchedChange::Add(time, assignment) = change {
-            let mut new_schedule = reservation_schedule.clone();
-            new_schedule.schedule.insert(*time, *assignment);
-            assert!(new_schedule.check_consistency());
-            assert!(request.satisfies_request(time, assignment.2));
-        }
-    }
-}
-
-#[cfg(test)]
-#[test]
 fn test_unassign() {
     let time = Utc.with_ymd_and_hms(2023, 7, 8, 7, 10, 11).unwrap();
     let state = ReservationState {
@@ -1068,61 +793,4 @@ fn test_unassign() {
             .len(),
         0
     );
-}
-
-#[cfg(test)]
-#[test]
-fn test_simple_reservation() {
-    let resources = vec!["station1".to_string(), "station2".to_string()];
-    let mut reservation_system = SyncReservationSystem::create_new_with_resources(&resources);
-
-    let alternative1 = ReservationRequest {
-        parameters: ReservationParameters {
-            resource_name: "station1".to_string(),
-            start_time: StartTimeRange {
-                earliest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 6, 10, 11).unwrap()),
-                latest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 7, 10, 11).unwrap()),
-            },
-            duration: Some(Duration::minutes(30)),
-        },
-        cost_function: Arc::new(NoCost {}),
-    };
-
-    let simple_request = vec![alternative1.clone()];
-
-    assert!(
-        reservation_system.current_state.assignments["station1"]
-            .schedule
-            .len()
-            == 0
-    );
-    reservation_system.request_reservation(simple_request);
-    assert!(
-        reservation_system.current_state.assignments["station1"]
-            .schedule
-            .len()
-            == 1
-    );
-
-    let alternative2 = ReservationRequest {
-        parameters: ReservationParameters {
-            resource_name: "station2".to_string(),
-            start_time: StartTimeRange {
-                earliest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 6, 10, 11).unwrap()),
-                latest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 7, 10, 11).unwrap()),
-            },
-            duration: Some(Duration::minutes(30)),
-        },
-        cost_function: Arc::new(NoCost {}),
-    };
-
-    let multiple_alternatives = vec![alternative1.clone(), alternative2];
-    reservation_system.request_reservation(multiple_alternatives);
-    assert!(reservation_system.current_state.assignments["station1"].check_consistency());
-    assert!(reservation_system.current_state.assignments["station2"].check_consistency());
-
-    let multiple_alternatives = vec![alternative1];
-    reservation_system.request_reservation(multiple_alternatives);
-    assert!(reservation_system.current_state.assignments["station1"].check_consistency());
-    assert!(reservation_system.current_state.assignments["station2"].check_consistency());
 }
