@@ -17,6 +17,8 @@ use crate::{
     ReservationRequest, StartTimeRange,
 };
 
+
+/// Ticket issued when making a request,
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ticket {
     count: usize,
@@ -32,15 +34,20 @@ impl Ticket {
     }
 }
 
+/// Keeps track of whether a reservation was claimed or not
 enum ReservationState {
     Claimed(usize),
 }
+
+/// Encodes a snapshot of the problem.
 #[derive(Debug, Clone)]
 pub(crate) struct Snapshot<P, T = ()> {
     pub(crate) problem: P,
     pub(crate) metadata: T,
 }
 
+
+/// A reservation system that
 pub struct FixedTimeReservationSystem {
     resources: Vec<String>,
     record: HashMap<usize, Vec<ReservationRequest>>,

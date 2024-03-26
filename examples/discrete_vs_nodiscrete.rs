@@ -117,7 +117,7 @@ fn main() {
                 clock_source: FakeClock::default(),
             };
 
-            model.from_problem(&sat_flexible_time_problem, stop);
+            model.feasbility_analysis(&sat_flexible_time_problem, stop);
 
             let greedy_dur = timer.elapsed();
 
