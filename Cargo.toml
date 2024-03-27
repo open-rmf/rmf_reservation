@@ -1,0 +1,35 @@
+[package]
+name = "rmf_reservations"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chrono = { version = "0.4", features = ["unstable-locales", "serde", "rustc-serialize"] }
+itertools = "0.10.5"
+futures = "0.3"
+serde = "1.0.164"
+serde_derive = "1.0.164"
+uuid = { version = "1.4.0", features = ["v4", "fast-rng", "macro-diagnostics"] }
+pathfinding = "4.3.1"
+ordered-float = "3.9.1"
+term-table = "1.3.2"
+rand = "0.8.5"
+rand_seeder = "0.2.3"
+rand_pcg = "0.3.1"
+fnv = "1.0.7"
+varisat = "0.2.2"
+iter_tools = "0.1.4"
+petgraph = "0.6.4"
+
+[dev-dependencies]
+axum = { version = "0.6", features= ["macros"]}
+hyper = { version = "0.14", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
+axum-server = "0.5.1"
+serde_json = "1.0.99"
+serde_yaml = "0.9"
+rmf_site_format = { git = "https://github.com/open-rmf/rmf_site.git", rev = "53c2eff7c2806b92cf584019997e720b2fb22e92"}
+mapf = { git = "https://github.com/open-rmf/mapf.git", rev = "e1682fd", features = ["serde"] }
+
