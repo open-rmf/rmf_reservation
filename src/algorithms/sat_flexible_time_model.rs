@@ -52,6 +52,33 @@ fn check_consistency(assignments: &Vec<Assignment>, problem: &Problem) -> bool {
     return true;
 }
 
+fn shrink_reservation_request(reservation_req: &ReservationRequest, time_window: DateTime<Utc>) -> Option<ReservationRequest>
+{
+    if let Some(earliest_start) = reservation_req.parameters.start_time.earliest_start {
+        if earliest_start > time_window {
+            return None;
+        }
+    }
+
+    if let Some(latest_start) = reservation_req.parameters.start_time.latest_start {
+        if latest_start < time_window {
+            return Some(reservation_req.clone());
+        }
+    }
+
+    Some(ReservationRequest {
+        parameters: crate::ReservationParameters {
+            resource_name: reservation_req.parameters.resource_name.clone(),
+            duration: reservation_req.parameters.duration.clone(),
+            start_time: crate::StartTimeRange {
+                earliest_start: reservation_req.parameters.start_time.earliest_start.clone(),
+                latest_start: Some(time_window)
+            }
+        },
+        cost_function: reservation_req.cost_function.clone(),
+    })
+}
+
 pub struct SATFlexibleTimeModel<CS: ClockSource + std::marker::Send + std::marker::Sync> {
     pub clock_source: CS,
 }
@@ -268,12 +295,71 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
 
         let current_time = self.clock_source.now();
 
+        let mut time_window = None;
+
         while !solved {
             if stop.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err(FlexibleSatError::TimedOut);
+                return;
             }
 
             final_schedule.clear();
+
+
+            if let Some(time_window) = time_window
+            {
+                let mut formula = varisat::CnfFormula::new();
+                for (_, alternatives) in var_by_resource.iter() {
+                    for i in 0..alternatives.len() {
+                        for j in i + 1..alternatives.len() {
+                            let alt_ij = alternatives[i];
+                            let alt_km = alternatives[j];
+
+                            let alt_ij_shrink = shrink_reservation_request(&problem.requests[alt_ij.0][alt_ij.1], time_window);
+                            let alt_km_shrink = shrink_reservation_request(&problem.requests[alt_km.0][alt_km.1], time_window);
+
+                            if alt_ij_shrink.is_none() {
+                                // Ban the entire alternative
+                                let x_ij = var_list.get(&alt_ij).expect("Something went wrong");
+                                formula.add_clause(&[Lit::from_var(*x_ij, false)]);
+
+                            }
+
+                            if alt_ij_shrink.is_none() {
+                                // Ban the entire alternative
+                                let x_km = var_list.get(&alt_km).expect("Something went wrong");
+                                formula.add_clause(&[Lit::from_var(*x_km, false)]);
+                            }
+
+
+
+
+                            if let Some(alt_ij_shrink) = alt_ij_shrink{
+                                if let Some(alt_km_shrink) = alt_km_shrink {
+                                    let Some(list_ij) = comes_after_vars.get(&alt_ij) else {
+                                        panic!("For some reason");
+                                    };
+
+                                    let X_ijkm = list_ij.get(&alt_km).expect("");
+                                    let Some(list_km) = comes_after_vars.get(&alt_km) else {
+                                        panic!("For some reason");
+                                    };
+
+                                    let X_kmij = list_km.get(&alt_ij).expect("");
+                                    if !alt_ij_shrink.can_be_scheduled_after(&alt_km_shrink.parameters) {
+                                        // ij cannot be after km
+                                        formula.add_clause(&[Lit::from_var(*X_ijkm, false)]);
+                                    }
+
+                                    if !alt_km_shrink.can_be_scheduled_after(&alt_ij_shrink.parameters) {
+                                        // ij cannot be after km
+                                        formula.add_clause(&[Lit::from_var(*X_kmij, false)]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             solver.solve();
 
@@ -382,7 +468,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                             }
                             continue;
                         } else {
-                            panic!("Somehow ended up with an infinite reservation with no end")
+                            panic!("Somehow ended up with an infinite reservation with no end in the middle of the schedule")
                         }
                     };
 
@@ -430,10 +516,16 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
             }
 
             if ok {
-
+                time_window = final_schedule.iter().filter(|(_resource, assignment)| {
+                    assignment.len() != 0
+                }).map(|(_resource, assignment)| {
+                    let assignment = &assignment[assignment.len()-1];
+                    assignment.start_time
+                }).max();
             } else {
                 println!("Could not solve");
             }
+        }
     }
 
     pub fn feasbility_analysis(
