@@ -79,6 +79,14 @@ fn shrink_reservation_request(reservation_req: &ReservationRequest, time_window:
     })
 }
 
+#[cfg(test)]
+#[test]
+fn test_shrink_reservation()
+{
+
+}
+
+
 pub struct SATFlexibleTimeModel<CS: ClockSource + std::marker::Send + std::marker::Sync> {
     pub clock_source: CS,
 }
@@ -299,6 +307,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
 
         while !solved {
             if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                sender.send(AlgorithmState::NotFound);
                 return;
             }
 
@@ -329,9 +338,6 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                                 let x_km = var_list.get(&alt_km).expect("Something went wrong");
                                 formula.add_clause(&[Lit::from_var(*x_km, false)]);
                             }
-
-
-
 
                             if let Some(alt_ij_shrink) = alt_ij_shrink{
                                 if let Some(alt_km_shrink) = alt_km_shrink {
