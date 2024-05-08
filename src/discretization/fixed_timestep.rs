@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use chrono::{DateTime, Duration, Utc};
 
 use crate::{
-    cost_function::static_cost::StaticCost, database::ClockSource, ReservationRequest,
+    cost_function::static_cost::StaticCost, database::ClockSource, ReservationRequestAlternative,
     StartTimeRange,
 };
 
@@ -30,8 +30,8 @@ impl<C: ClockSource> FixedTimestep<C> {
 impl<C: ClockSource> DescretizationStrategy for FixedTimestep<C> {
     fn discretize(
         &mut self,
-        requests: &Vec<Vec<crate::ReservationRequest>>,
-    ) -> Vec<Vec<crate::ReservationRequest>> {
+        requests: &Vec<Vec<crate::ReservationRequestAlternative>>,
+    ) -> Vec<Vec<crate::ReservationRequestAlternative>> {
         let mut result = vec![];
 
         for request_id in 0..requests.len() {
@@ -64,14 +64,17 @@ impl<C: ClockSource> DescretizationStrategy for FixedTimestep<C> {
                         .cost_function
                         .cost(&params, &current_time);
 
-                    let new_reservation = ReservationRequest {
+                    let new_reservation = ReservationRequestAlternative {
                         parameters: params,
                         cost_function: Arc::new(StaticCost::new(cost)),
                     };
                     broken_down_options.push(new_reservation);
                     current_time += self.timestep;
 
-                    self.remapping.insert((result.len(), broken_down_options.len() -1), (request_id, res));
+                    self.remapping.insert(
+                        (result.len(), broken_down_options.len() - 1),
+                        (request_id, res),
+                    );
                 }
             }
             result.push(broken_down_options);

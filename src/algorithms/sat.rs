@@ -10,7 +10,7 @@ use varisat::{ExtendFormula, Lit, Solver};
 
 use crate::{
     cost_function::{self, static_cost::StaticCost},
-    ReservationRequest,
+    ReservationRequestAlternative,
 };
 
 use super::{greedy_solver::Problem, AlgorithmState, SolverAlgorithm};
@@ -446,7 +446,7 @@ impl SATSolver {
 pub fn generate_sat_devil(
     n_resources: usize,
     n_alt: usize,
-) -> (Vec<Vec<ReservationRequest>>, Vec<String>) {
+) -> (Vec<Vec<ReservationRequestAlternative>>, Vec<String>) {
     let mut sat_devil_resources: Vec<_> = (0..n_resources).map(|i| format!("{:?}", i)).collect();
     let time_step = Duration::seconds(100);
     let start_time = Utc.with_ymd_and_hms(2014, 7, 8, 9, 10, 11).unwrap();
@@ -454,7 +454,7 @@ pub fn generate_sat_devil(
 
     for i in 0..n_resources {
         for j in 0..n_alt {
-            let req = ReservationRequest {
+            let req = ReservationRequestAlternative {
                 parameters: crate::ReservationParameters {
                     resource_name: sat_devil_resources[(i + j) % n_resources].clone(),
                     duration: Some(Duration::seconds(100)),

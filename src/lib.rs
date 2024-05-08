@@ -53,7 +53,7 @@ impl StartTimeRange {
         }
     }
 
-     /// Create a time range which starts exactly at some given time.
+    /// Create a time range which starts exactly at some given time.
     pub fn exactly_at(time: &DateTime<Utc>) -> Self {
         Self {
             earliest_start: Some(time.clone()),
@@ -109,13 +109,13 @@ pub trait CostFunction {
 
 /// Reservation Request represents one possible alternative reservation
 #[derive(Clone)]
-pub struct ReservationRequest {
+pub struct ReservationRequestAlternative {
     /// The parameters
     pub parameters: ReservationParameters,
     /// Cost function to use
     pub cost_function: Arc<dyn CostFunction + Send + Sync>,
 }
-impl fmt::Debug for ReservationRequest {
+impl fmt::Debug for ReservationRequestAlternative {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReservationRequest")
             .field("parameters", &self.parameters)
@@ -123,7 +123,7 @@ impl fmt::Debug for ReservationRequest {
     }
 }
 
-impl ReservationRequest {
+impl ReservationRequestAlternative {
     /// Check if a certain set of parameters satisfies this request
     fn satisfies_request(&self, start_time: &DateTime<Utc>, duration: Option<Duration>) -> bool {
         if let Some(earliest_start_time) = self.parameters.start_time.earliest_start {
@@ -189,14 +189,6 @@ struct ReservationSchedule {
     schedule: BTreeMap<DateTime<Utc>, Assignment>,
 }
 
-
-
-#[derive(Clone, Debug, PartialEq, Hash, Eq)]
-enum SchedChange {
-    Remove(DateTime<Utc>),
-    Add(DateTime<Utc>, Assignment),
-}
-
 impl ReservationSchedule {
     fn new() -> Self {
         Self {
@@ -219,11 +211,10 @@ impl ReservationSchedule {
         self.schedule = self.schedule.split_off(&time);
     }
 
-
     /// Returns a list of assignments that may have a potential conflict with the relevant ReservationRequest
     fn check_potential_conflict(
         &self,
-        reservation: &ReservationRequest,
+        reservation: &ReservationRequestAlternative,
     ) -> std::collections::btree_map::Range<'_, DateTime<Utc>, Assignment> {
         let earliest_time = reservation.parameters.start_time.earliest_start;
 
@@ -294,23 +285,14 @@ impl ReservationSchedule {
             self.schedule.range(..)
         }
     }
-
-}
-
-
-
-struct NoCost {}
-
-impl CostFunction for NoCost {
-    fn cost(&self, _parameters: &ReservationParameters, _instant: &DateTime<Utc>) -> f64 {
-        0f64
-    }
 }
 
 #[cfg(test)]
 #[test]
 fn test_satisfies_request() {
-    let req = ReservationRequest {
+    use crate::cost_function::static_cost::StaticCost;
+
+    let req = ReservationRequestAlternative {
         parameters: ReservationParameters {
             resource_name: "test".to_string(),
             duration: Some(Duration::minutes(30)),
@@ -319,7 +301,7 @@ fn test_satisfies_request() {
                 latest_start: None,
             },
         },
-        cost_function: Arc::new(NoCost {}),
+        cost_function: Arc::new(StaticCost::new(0.0)),
     };
 
     let start_time = Utc.with_ymd_and_hms(2023, 7, 8, 6, 10, 11).unwrap();
@@ -327,7 +309,7 @@ fn test_satisfies_request() {
     assert!(req.satisfies_request(&start_time, Some(Duration::minutes(20))) == false);
     assert!(req.satisfies_request(&start_time, None) == false);
 
-    let req = ReservationRequest {
+    let req = ReservationRequestAlternative {
         parameters: ReservationParameters {
             resource_name: "test".to_string(),
             duration: Some(Duration::minutes(30)),
@@ -336,7 +318,7 @@ fn test_satisfies_request() {
                 latest_start: Some(Utc.with_ymd_and_hms(2023, 7, 8, 8, 10, 11).unwrap()),
             },
         },
-        cost_function: Arc::new(NoCost {}),
+        cost_function: Arc::new(StaticCost::new(0.0)),
     };
 
     // Too early
@@ -355,10 +337,12 @@ fn test_satisfies_request() {
 #[cfg(test)]
 #[test]
 fn test_conflict_checker() {
-    let cost_func = Arc::new(NoCost {});
+    use crate::cost_function::static_cost::StaticCost;
+
+    let cost_func = Arc::new(StaticCost::new(0.0));
 
     // Check for an indefinite reservation with no specification on
-    let indefinite_no_constraints = ReservationRequest {
+    let indefinite_no_constraints = ReservationRequestAlternative {
         parameters: ReservationParameters {
             resource_name: "resource1".to_string(),
             start_time: StartTimeRange {
@@ -370,7 +354,7 @@ fn test_conflict_checker() {
         cost_function: cost_func.clone(),
     };
 
-    let indefinite_with_constraints = ReservationRequest {
+    let indefinite_with_constraints = ReservationRequestAlternative {
         parameters: ReservationParameters {
             resource_name: "resource1".to_string(),
             start_time: StartTimeRange {
@@ -383,7 +367,7 @@ fn test_conflict_checker() {
     };
 
     // Definite requet with fixed time bound
-    let definite_request_starting_with_specified_start_time = ReservationRequest {
+    let definite_request_starting_with_specified_start_time = ReservationRequestAlternative {
         parameters: ReservationParameters {
             resource_name: "resource1".to_string(),
             start_time: StartTimeRange {
@@ -395,7 +379,7 @@ fn test_conflict_checker() {
         cost_function: cost_func.clone(),
     };
 
-    let definite_request_with_no_earliest = ReservationRequest {
+    let definite_request_with_no_earliest = ReservationRequestAlternative {
         parameters: ReservationParameters {
             resource_name: "resource1".to_string(),
             start_time: StartTimeRange {
@@ -407,7 +391,7 @@ fn test_conflict_checker() {
         cost_function: cost_func.clone(),
     };
 
-    let definite_request_with_no_latest = ReservationRequest {
+    let definite_request_with_no_latest = ReservationRequestAlternative {
         parameters: ReservationParameters {
             resource_name: "resource1".to_string(),
             start_time: StartTimeRange {

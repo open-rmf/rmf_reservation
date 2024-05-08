@@ -8,7 +8,7 @@ use ordered_float::OrderedFloat;
 use pathfinding::{kuhn_munkres, prelude::Weights};
 use term_table::{row::Row, table_cell::TableCell, Table};
 
-use crate::{ReservationParameters, ReservationRequest, StartTimeRange};
+use crate::{ReservationParameters, ReservationRequestAlternative, StartTimeRange};
 
 struct SparseAxisMasker {
     masked_idx_remapping: Vec<Option<usize>>,
@@ -100,7 +100,7 @@ fn test_sparse_axis_masker() {
 pub struct ReservationsKuhnMunkres {
     resources: Vec<String>,
     resource_name_to_id: HashMap<String, usize>,
-    requests: HashMap<usize, Vec<ReservationRequest>>,
+    requests: HashMap<usize, Vec<ReservationRequestAlternative>>,
     // Maps requests by (request_id, resource_id) -> index in requests table
     request_reservation_idx: HashMap<(usize, usize), usize>,
     last_request_id: usize,
@@ -196,7 +196,10 @@ impl ReservationsKuhnMunkres {
         }
     }
 
-    pub fn request_resources(&mut self, request: Vec<ReservationRequest>) -> Option<usize> {
+    pub fn request_resources(
+        &mut self,
+        request: Vec<ReservationRequestAlternative>,
+    ) -> Option<usize> {
         let req_id = self.last_request_id;
         for r_id in 0..request.len() {
             let resource = request[r_id].parameters.resource_name.clone();
@@ -309,7 +312,7 @@ fn test_kuhn_munkres_correctness() {
     let mut res_sys = ReservationsKuhnMunkres::create_with_resources(&resources);
 
     let req1 = vec![
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: ReservationParameters {
                 resource_name: "Parking Spot 1".to_string(),
                 duration: None,
@@ -317,7 +320,7 @@ fn test_kuhn_munkres_correctness() {
             },
             cost_function: Arc::new(StaticCost::new(10.0)),
         },
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: ReservationParameters {
                 resource_name: "Parking Spot 2".to_string(),
                 duration: None,
@@ -327,7 +330,7 @@ fn test_kuhn_munkres_correctness() {
         },
     ];
     let req2 = vec![
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: ReservationParameters {
                 resource_name: "Parking Spot 2".to_string(),
                 duration: None,
@@ -335,7 +338,7 @@ fn test_kuhn_munkres_correctness() {
             },
             cost_function: Arc::new(StaticCost::new(10.0)),
         },
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: ReservationParameters {
                 resource_name: "Parking Spot 3".to_string(),
                 duration: None,
@@ -375,7 +378,7 @@ fn test_resource_constraint() {
     let mut res_sys = ReservationsKuhnMunkres::create_with_resources(&resources);
 
     let req1 = vec![
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: ReservationParameters {
                 resource_name: "Parking Spot 1".to_string(),
                 duration: None,
@@ -383,7 +386,7 @@ fn test_resource_constraint() {
             },
             cost_function: Arc::new(StaticCost::new(10.0)),
         },
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: ReservationParameters {
                 resource_name: "Parking Spot 2".to_string(),
                 duration: None,
@@ -393,7 +396,7 @@ fn test_resource_constraint() {
         },
     ];
     let req2 = vec![
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: ReservationParameters {
                 resource_name: "Parking Spot 2".to_string(),
                 duration: None,
@@ -401,7 +404,7 @@ fn test_resource_constraint() {
             },
             cost_function: Arc::new(StaticCost::new(10.0)),
         },
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: ReservationParameters {
                 resource_name: "Parking Spot 3".to_string(),
                 duration: None,
@@ -443,7 +446,7 @@ fn test_rquest_constraint() {
     let mut res_sys = ReservationsKuhnMunkres::create_with_resources(&resources);
 
     let req1 = vec![
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: ReservationParameters {
                 resource_name: "Parking Spot 1".to_string(),
                 duration: None,
@@ -451,7 +454,7 @@ fn test_rquest_constraint() {
             },
             cost_function: Arc::new(StaticCost::new(10.0)),
         },
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: ReservationParameters {
                 resource_name: "Parking Spot 2".to_string(),
                 duration: None,
@@ -461,7 +464,7 @@ fn test_rquest_constraint() {
         },
     ];
     let req2 = vec![
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: ReservationParameters {
                 resource_name: "Parking Spot 2".to_string(),
                 duration: None,
@@ -469,7 +472,7 @@ fn test_rquest_constraint() {
             },
             cost_function: Arc::new(StaticCost::new(10.0)),
         },
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: ReservationParameters {
                 resource_name: "Parking Spot 3".to_string(),
                 duration: None,

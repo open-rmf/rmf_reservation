@@ -3,14 +3,16 @@ use std::{collections::HashMap, sync::Arc};
 use chrono::{Duration, TimeZone, Utc};
 use rand::Rng;
 
-use crate::{cost_function::static_cost::StaticCost, ReservationRequest, ReservationSchedule};
+use crate::{
+    cost_function::static_cost::StaticCost, ReservationRequestAlternative, ReservationSchedule,
+};
 
 // TODO(arjo) there is bug in this that generates rubbish occassionally.
 pub fn generate_test_scenario_with_known_best(
     num_resources: usize,
     max_requests_per_resource: usize,
     num_conflicts: usize,
-) -> (Vec<Vec<ReservationRequest>>, Vec<String>) {
+) -> (Vec<Vec<ReservationRequestAlternative>>, Vec<String>) {
     let resources = Vec::from_iter((0..num_resources).map(|m| format!("Station {}", m)));
     let mut rng = rand::thread_rng();
 
@@ -27,7 +29,7 @@ pub fn generate_test_scenario_with_known_best(
         for i in 0..res_size {
             last_start_time += Duration::minutes(rng.gen_range(0..60));
             let duration = Duration::minutes(rng.gen_range(20..90));
-            let request = ReservationRequest {
+            let request = ReservationRequestAlternative {
                 parameters: crate::ReservationParameters {
                     resource_name: res.clone(),
                     duration: Some(duration),
@@ -71,7 +73,7 @@ pub fn generate_test_scenario_with_known_best(
         for s in &schedule.schedule {
             if idx == res_id {
                 // Lets create a reservation to disrupt the previous two reservations
-                let req = ReservationRequest {
+                let req = ReservationRequestAlternative {
                     parameters: crate::ReservationParameters {
                         resource_name: resource_name.clone(),
                         duration: Some((*s.0 + s.1 .2.unwrap()) - prev_time),
