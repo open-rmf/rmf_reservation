@@ -14,7 +14,7 @@ use rand::Rng;
 
 use crate::{
     cost_function::static_cost::StaticCost, utils::multimap::UniqueMultiHashMap,
-    ReservationRequest, ReservationSchedule,
+    ReservationRequestAlternative, ReservationSchedule,
 };
 
 use super::SolverAlgorithm;
@@ -29,7 +29,7 @@ pub struct ConflictTracker {
     base_resources: Vec<String>,
     last_request_id: usize,
     resource_name_to_id: HashMap<String, usize>,
-    requests: HashMap<usize, Vec<ReservationRequest>>,
+    requests: HashMap<usize, Vec<ReservationRequestAlternative>>,
     // Maps requests by (request_id, resource_id) -> index in requests table
     request_reservation_idx: HashMap<(usize, usize), usize>,
 }
@@ -51,7 +51,10 @@ impl ConflictTracker {
     }
 
     // Requires that ReservationRequests have a well defined start time
-    pub fn request_resources(&mut self, request: Vec<ReservationRequest>) -> Option<usize> {
+    pub fn request_resources(
+        &mut self,
+        request: Vec<ReservationRequestAlternative>,
+    ) -> Option<usize> {
         let req_id = self.last_request_id;
         for r_id in 0..request.len() {
             let resource = request[r_id].parameters.resource_name.clone();
@@ -69,7 +72,7 @@ impl ConflictTracker {
     pub fn generate_literals_and_remap_requests(&self) -> Problem {
         let mut fake_resources = vec![];
         let mut fake_resource_mapping: HashMap<String, FakeResourceMetaInfo> = HashMap::new();
-        let mut fake_requests: HashMap<usize, Vec<ReservationRequest>> = HashMap::new();
+        let mut fake_requests: HashMap<usize, Vec<ReservationRequestAlternative>> = HashMap::new();
 
         let mut id_to_res = HashMap::new();
         let mut res_to_id = HashMap::new();
@@ -278,7 +281,7 @@ pub struct Problem {
     res_to_id: HashMap<String, (usize, usize)>,
     id_to_res: HashMap<(usize, usize), String>,
     conflict_sets: HashMap<String, HashSet<String>>,
-    fake_requests: HashMap<usize, Vec<ReservationRequest>>,
+    fake_requests: HashMap<usize, Vec<ReservationRequestAlternative>>,
 }
 
 impl Problem {
@@ -666,7 +669,7 @@ fn test_conflict_checker() {
     use crate::{cost_function::static_cost::StaticCost, ReservationParameters, StartTimeRange};
 
     let resources = vec!["station1".to_string(), "station2".to_string()];
-    let alternative1 = ReservationRequest {
+    let alternative1 = ReservationRequestAlternative {
         parameters: ReservationParameters {
             resource_name: resources[0].clone(),
             start_time: StartTimeRange {
@@ -678,7 +681,7 @@ fn test_conflict_checker() {
         cost_function: Arc::new(StaticCost::new(3.0)),
     };
 
-    let alternative2 = ReservationRequest {
+    let alternative2 = ReservationRequestAlternative {
         parameters: ReservationParameters {
             resource_name: resources[1].clone(),
             start_time: StartTimeRange {
@@ -690,7 +693,7 @@ fn test_conflict_checker() {
         cost_function: Arc::new(StaticCost::new(6.0)),
     };
 
-    let alternative1_cheaper = ReservationRequest {
+    let alternative1_cheaper = ReservationRequestAlternative {
         parameters: ReservationParameters {
             resource_name: resources[0].clone(),
             start_time: StartTimeRange {
@@ -719,7 +722,7 @@ fn test_conflict_checker() {
     assert!((solution.cost.0 - 8.0).abs() < 1.0);
 }
 
-fn validate_optimal_solution(soln: &(Vec<Vec<ReservationRequest>>, Vec<String>)) {}
+fn validate_optimal_solution(soln: &(Vec<Vec<ReservationRequestAlternative>>, Vec<String>)) {}
 
 #[cfg(test)]
 #[test]

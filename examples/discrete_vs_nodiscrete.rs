@@ -18,7 +18,7 @@ use rmf_reservations::database::ClockSource;
 use rmf_reservations::discretization::fixed_timestep::FixedTimestep;
 use rmf_reservations::discretization::DescretizationStrategy;
 use rmf_reservations::ReservationParameters;
-use rmf_reservations::ReservationRequest;
+use rmf_reservations::ReservationRequestAlternative;
 use rmf_reservations::StartTimeRange;
 
 #[derive(Default, Clone)]
@@ -31,12 +31,11 @@ impl ClockSource for FakeClock {
     }
 }
 
-
 fn generate_reservation_requests(
     time_range: chrono::Duration,
     alts: usize,
     reqs: usize,
-) -> (Vec<Vec<ReservationRequest>>, Vec<String>) {
+) -> (Vec<Vec<ReservationRequestAlternative>>, Vec<String>) {
     let mut result = vec![];
     let mut rng = rand::thread_rng();
 
@@ -51,7 +50,7 @@ fn generate_reservation_requests(
     for req in 0..reqs {
         let mut alternatives = vec![];
         for alternative in 0..alts {
-            let x = ReservationRequest {
+            let x = ReservationRequestAlternative {
                 parameters: ReservationParameters {
                     resource_name: resource[alternative].clone(),
                     duration: Some(Duration::minutes(200)),
@@ -70,7 +69,10 @@ fn generate_reservation_requests(
     (result, resource)
 }
 
-fn discretize(res: &Vec<Vec<ReservationRequest>>, clock_source: FakeClock) -> Vec<Vec<ReservationRequest>> {
+fn discretize(
+    res: &Vec<Vec<ReservationRequestAlternative>>,
+    clock_source: FakeClock,
+) -> Vec<Vec<ReservationRequestAlternative>> {
     let mut latest = Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap();
     for r in res {
         for v in r {
@@ -82,7 +84,6 @@ fn discretize(res: &Vec<Vec<ReservationRequest>>, clock_source: FakeClock) -> Ve
     let mut remapper = FixedTimestep::new(Duration::minutes(10), latest, clock_source);
     remapper.discretize(res)
 }
-
 
 fn main() {
     //for x in 6..10 {

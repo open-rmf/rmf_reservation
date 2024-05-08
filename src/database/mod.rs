@@ -14,9 +14,8 @@ use crate::{
         self,
         wait_points::{WaitPointInfo, WaitPointRequest, WaitPointSystem},
     },
-    ReservationRequest, StartTimeRange,
+    ReservationRequestAlternative, StartTimeRange,
 };
-
 
 /// Ticket issued when making a request,
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,11 +45,10 @@ pub(crate) struct Snapshot<P, T = ()> {
     pub(crate) metadata: T,
 }
 
-
 /// A reservation system that
 pub struct FixedTimeReservationSystem {
     resources: Vec<String>,
-    record: HashMap<usize, Vec<ReservationRequest>>,
+    record: HashMap<usize, Vec<ReservationRequestAlternative>>,
     claims: HashMap<usize, ReservationState>,
     max_id: usize,
     async_executor: AsyncExecutor<Problem, ()>,
@@ -73,7 +71,7 @@ impl FixedTimeReservationSystem {
 
     pub fn request_resources(
         &mut self,
-        alternatives: Vec<ReservationRequest>,
+        alternatives: Vec<ReservationRequestAlternative>,
     ) -> Result<Ticket, &'static str> {
         for alt in &alternatives {
             if alt.parameters.start_time.earliest_start != alt.parameters.start_time.latest_start
@@ -160,7 +158,7 @@ struct FlexibleTimeReservationSystemMetadata {
 }
 
 pub struct FlexibleTimeReservationSystem<ClockType = DefaultUtcClock> {
-    record: HashMap<usize, Vec<ReservationRequest>>,
+    record: HashMap<usize, Vec<ReservationRequestAlternative>>,
     claims: HashMap<usize, super::algorithms::sat_flexible_time_model::Assignment>,
     max_id: usize,
     async_executor: AsyncExecutor<
@@ -215,7 +213,7 @@ impl<ClockType: ClockSource + Clone + std::marker::Send + std::marker::Sync + 's
 
     pub fn request_resources(
         &mut self,
-        alternatives: Vec<ReservationRequest>,
+        alternatives: Vec<ReservationRequestAlternative>,
     ) -> Result<Ticket, &'static str> {
         self.record.insert(self.max_id, alternatives);
         let result = Ticket { count: self.max_id };
@@ -415,7 +413,7 @@ fn test_sat_flexible_time_model() {
     let mut flexible_ressys: FlexibleTimeReservationSystem<DefaultUtcClock> =
         FlexibleTimeReservationSystem::default();
 
-    let alternatives1 = vec![ReservationRequest {
+    let alternatives1 = vec![ReservationRequestAlternative {
         parameters: crate::ReservationParameters {
             resource_name: "res1".to_string(),
             duration: Some(Duration::minutes(10)),
@@ -428,7 +426,7 @@ fn test_sat_flexible_time_model() {
     }];
     let ticket1 = flexible_ressys.request_resources(alternatives1).unwrap();
 
-    let alternatives2 = vec![ReservationRequest {
+    let alternatives2 = vec![ReservationRequestAlternative {
         parameters: crate::ReservationParameters {
             resource_name: "res2".to_string(),
             duration: Some(Duration::minutes(10)),

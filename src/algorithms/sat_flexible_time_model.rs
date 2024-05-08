@@ -10,18 +10,39 @@ use varisat::{CnfFormula, ExtendFormula, Lit, Solver, Var};
 use chrono::{prelude::*, Duration};
 
 use crate::database::ClockSource;
-use crate::ReservationRequest;
+use crate::ReservationRequestAlternative;
 
 use super::{AlgorithmState, SolverAlgorithm};
 
+/// Snapshot of requests that need to be solved.
+///
+/// This is how you specify a problem set that needs solving.
 #[derive(Debug, Clone)]
 pub struct Problem {
-    pub requests: Vec<Vec<ReservationRequest>>,
+    /// A vector of requests. A solved problem will satisfy at least one "alternative"
+    /// within a request.
+    pub requests: Vec<Vec<ReservationRequestAlternative>>,
 }
 
+impl Problem {
+    /// Request one alternative out of a few
+    /// Returns the index of the request. This is useful for checking the assignment later on.
+    pub fn request_one_of(&mut self, alternatives: Vec<ReservationRequestAlternative>) -> usize {
+        self.requests.push(alternatives);
+        return self.requests.len() - 1;
+    }
+}
+
+/// Snapshot of a solution. A solved schedule contains a list of assingments for each resource
 #[derive(Debug, Clone)]
 pub struct Assignment {
+    /// For a given solution this refers to the alternative.
+    /// The first index refers to the request ID you retrieved from `request_one_of` or
+    /// the index of the alternatives. The second index refers to which alternative/resource
+    /// needs to be used.
     pub id: (usize, usize),
+
+    /// Start time of a said assignment.
     pub start_time: chrono::DateTime<Utc>,
 }
 
@@ -52,8 +73,10 @@ fn check_consistency(assignments: &Vec<Assignment>, problem: &Problem) -> bool {
     return true;
 }
 
-fn shrink_reservation_request(reservation_req: &ReservationRequest, time_window: DateTime<Utc>) -> Option<ReservationRequest>
-{
+fn shrink_reservation_request(
+    reservation_req: &ReservationRequestAlternative,
+    time_window: DateTime<Utc>,
+) -> Option<ReservationRequestAlternative> {
     if let Some(earliest_start) = reservation_req.parameters.start_time.earliest_start {
         if earliest_start > time_window {
             return None;
@@ -66,27 +89,22 @@ fn shrink_reservation_request(reservation_req: &ReservationRequest, time_window:
         }
     }
 
-    Some(ReservationRequest {
+    Some(ReservationRequestAlternative {
         parameters: crate::ReservationParameters {
             resource_name: reservation_req.parameters.resource_name.clone(),
             duration: reservation_req.parameters.duration.clone(),
             start_time: crate::StartTimeRange {
                 earliest_start: reservation_req.parameters.start_time.earliest_start.clone(),
-                latest_start: Some(time_window)
-            }
+                latest_start: Some(time_window),
+            },
         },
         cost_function: reservation_req.cost_function.clone(),
     })
 }
 
-#[cfg(test)]
-#[test]
-fn test_shrink_reservation()
-{
-
-}
-
-
+/// Solver for scenarios where there is a starting time range instead of a fixed starting time.
+/// Note: The solvers in this class currently ignore thestarting time range.
+/// You need to implement a clock source. The reason is that we needto have the current time as a starting point.
 pub struct SATFlexibleTimeModel<CS: ClockSource + std::marker::Send + std::marker::Sync> {
     pub clock_source: CS,
 }
@@ -116,13 +134,19 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SolverAlgo
 }
 
 impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibleTimeModel<CS> {
-
+    /// This class of solvers tries to pack all the alternatives into the shortest possible time window
+    /// It ignores the cost function. This is useful if you want to pack more items
+    /// - `problem` - A reservation problem you want to solve.
+    /// - `sender` - A channel by which the solver communicates its latest "best" solution. This is useful
+    /// for scenarios where the solver is taking too long and you need a feasible solution soon. You can listen on this
+    /// channel without calling `feasbility_analysis`.
+    /// - `stop` - A boolean by which you can tell the solver to stop solving.
     pub fn time_optimality_solver(
         &self,
         problem: &Problem,
         sender: Sender<AlgorithmState>,
-        stop: std::sync::Arc<AtomicBool>)
-    {
+        stop: std::sync::Arc<AtomicBool>,
+    ) {
         let mut resources = HashMap::new();
         let mut id_to_resource = vec![];
         let mut var_list = HashMap::new();
@@ -313,9 +337,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
 
             final_schedule.clear();
 
-
-            if let Some(time_window) = time_window
-            {
+            if let Some(time_window) = time_window {
                 let mut formula = varisat::CnfFormula::new();
                 for (_, alternatives) in var_by_resource.iter() {
                     for i in 0..alternatives.len() {
@@ -323,14 +345,19 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                             let alt_ij = alternatives[i];
                             let alt_km = alternatives[j];
 
-                            let alt_ij_shrink = shrink_reservation_request(&problem.requests[alt_ij.0][alt_ij.1], time_window);
-                            let alt_km_shrink = shrink_reservation_request(&problem.requests[alt_km.0][alt_km.1], time_window);
+                            let alt_ij_shrink = shrink_reservation_request(
+                                &problem.requests[alt_ij.0][alt_ij.1],
+                                time_window,
+                            );
+                            let alt_km_shrink = shrink_reservation_request(
+                                &problem.requests[alt_km.0][alt_km.1],
+                                time_window,
+                            );
 
                             if alt_ij_shrink.is_none() {
                                 // Ban the entire alternative
                                 let x_ij = var_list.get(&alt_ij).expect("Something went wrong");
                                 formula.add_clause(&[Lit::from_var(*x_ij, false)]);
-
                             }
 
                             if alt_ij_shrink.is_none() {
@@ -339,7 +366,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                                 formula.add_clause(&[Lit::from_var(*x_km, false)]);
                             }
 
-                            if let Some(alt_ij_shrink) = alt_ij_shrink{
+                            if let Some(alt_ij_shrink) = alt_ij_shrink {
                                 if let Some(alt_km_shrink) = alt_km_shrink {
                                     let Some(list_ij) = comes_after_vars.get(&alt_ij) else {
                                         panic!("For some reason");
@@ -351,12 +378,16 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                                     };
 
                                     let X_kmij = list_km.get(&alt_ij).expect("");
-                                    if !alt_ij_shrink.can_be_scheduled_after(&alt_km_shrink.parameters) {
+                                    if !alt_ij_shrink
+                                        .can_be_scheduled_after(&alt_km_shrink.parameters)
+                                    {
                                         // ij cannot be after km
                                         formula.add_clause(&[Lit::from_var(*X_ijkm, false)]);
                                     }
 
-                                    if !alt_km_shrink.can_be_scheduled_after(&alt_ij_shrink.parameters) {
+                                    if !alt_km_shrink
+                                        .can_be_scheduled_after(&alt_ij_shrink.parameters)
+                                    {
                                         // ij cannot be after km
                                         formula.add_clause(&[Lit::from_var(*X_kmij, false)]);
                                     }
@@ -522,18 +553,26 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
             }
 
             if ok {
-                time_window = final_schedule.iter().filter(|(_resource, assignment)| {
-                    assignment.len() != 0
-                }).map(|(_resource, assignment)| {
-                    let assignment = &assignment[assignment.len()-1];
-                    assignment.start_time
-                }).max();
+                time_window = final_schedule
+                    .iter()
+                    .filter(|(_resource, assignment)| assignment.len() != 0)
+                    .map(|(_resource, assignment)| {
+                        let assignment = &assignment[assignment.len() - 1];
+                        assignment.start_time
+                    })
+                    .max();
             } else {
                 println!("Could not solve");
             }
         }
     }
 
+    /// Checks if a set of requests is feasible. Given a problem we see if there is a way to schedule the solution while ignoring the
+    /// cost function.
+    /// - `problem` - Takes in th eproblem that needs to be optimized.
+    /// - `stop` - Takes in an atomic boolean that allows you to stop the computation from another thread.
+    /// Returns a result containing an example feasible schedule if OK. Otherwise, returns an error.
+    /// The feasible schedule is a HashMap where the key of the hashmap is the resource and thevalue of the hashmap is the assigned alternative.
     pub fn feasbility_analysis(
         &self,
         problem: &Problem,
@@ -906,7 +945,7 @@ fn test_flexible_one_item_sat_solver() {
 
     let current_time = chrono::Utc::now();
 
-    let req1 = vec![ReservationRequest {
+    let req1 = vec![ReservationRequestAlternative {
         parameters: crate::ReservationParameters {
             resource_name: "Resource1".to_string(),
             duration: Some(chrono::Duration::seconds(100)),
@@ -944,7 +983,7 @@ fn test_flexible_two_items_sat_solver() {
 
     let current_time = chrono::Utc::now();
 
-    let req1 = vec![ReservationRequest {
+    let req1 = vec![ReservationRequestAlternative {
         parameters: crate::ReservationParameters {
             resource_name: "Resource1".to_string(),
             duration: Some(chrono::Duration::seconds(100)),
@@ -957,7 +996,7 @@ fn test_flexible_two_items_sat_solver() {
     }];
 
     let req2 = vec![
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: crate::ReservationParameters {
                 resource_name: "Resource1".to_string(),
                 duration: Some(chrono::Duration::seconds(100)),
@@ -968,7 +1007,7 @@ fn test_flexible_two_items_sat_solver() {
             },
             cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
         },
-        ReservationRequest {
+        ReservationRequestAlternative {
             parameters: crate::ReservationParameters {
                 resource_name: "Resource1".to_string(),
                 duration: Some(chrono::Duration::seconds(100)),
@@ -1015,7 +1054,7 @@ fn test_flexible_n_items_sat_solver() {
     let task_dur = Duration::seconds(100);
     let mut requests = vec![];
     for i in 0..n {
-        requests.push(vec![ReservationRequest {
+        requests.push(vec![ReservationRequestAlternative {
             parameters: crate::ReservationParameters {
                 resource_name: "Resource1".to_string(),
                 duration: Some(task_dur),
@@ -1060,7 +1099,7 @@ fn test_flexible_no_soln_sat_solver() {
     let task_dur = Duration::seconds(100);
     let mut requests = vec![];
     for i in 0..n {
-        requests.push(vec![ReservationRequest {
+        requests.push(vec![ReservationRequestAlternative {
             parameters: crate::ReservationParameters {
                 resource_name: "Resource1".to_string(),
                 duration: Some(task_dur),

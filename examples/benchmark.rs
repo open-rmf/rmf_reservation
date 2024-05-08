@@ -1,7 +1,7 @@
 /// Benchmark
-/// 
+///
 /// This benchmark compares the speed at which we can calculate suboptimal solutions, optimal solutions using the assignment heuristic and
-/// 
+///
 use std::hint;
 use std::io::Write;
 use std::sync::atomic::AtomicBool;
