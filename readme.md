@@ -5,6 +5,10 @@ we provide a very simple formulation for resource optimization and scheduling. A
 resource like a charger for a fixed duration of time within a given time range. The system will then assign the robot
 to said resource.
 
+At 10,000ft the library solves the following problem:
+
+> Suppose you have n robots declaring that “I'd like to use one of (resource 1, resource 2, resource 3) for (d1, d2, d3) minutes starting at a certain time. Each alternative has some cost c(t).”
+
 This is the type of resource constraint scheduling that this library can solve:
 ```
 Robot1 Charging Request:
