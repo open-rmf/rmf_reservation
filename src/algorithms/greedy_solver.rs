@@ -702,7 +702,9 @@ fn test_conflict_checker() {
     //println!("Generated literals");
     solver.debug_print();
     let stop = Arc::new(AtomicBool::new(false));
-    let (solution, _) = solver.naive_greedy_solver(FnvHashMap::default(), stop).unwrap();
+    let (solution, _) = solver
+        .naive_greedy_solver(FnvHashMap::default(), stop)
+        .unwrap();
     println!("{:?}", solution);
     assert!((solution.cost.0 - 8.0).abs() < 1.0);
 }
@@ -727,7 +729,9 @@ fn test_generation() {
     let soln = system.generate_literals_and_remap_requests();
     soln.debug_print();
     let arc = Arc::new(AtomicBool::new(false));
-    let _ = soln.naive_greedy_solver(FnvHashMap::default(), arc).unwrap();
+    let _ = soln
+        .naive_greedy_solver(FnvHashMap::default(), arc)
+        .unwrap();
     // Ok(())
     //});
 }
