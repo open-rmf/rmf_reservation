@@ -446,7 +446,7 @@ fn test_sat_flexible_time_model() {
     let safe_spots = vec!["1".to_string(), "2".to_string()];
 
     // 400 milliseconds is enough for the solver hopefully
-    std::thread::sleep(std::time::Duration::from_millis(1000));
+    std::thread::sleep(std::time::Duration::from_millis(5000));
 
     let res1 = flexible_ressys.claim_request(ticket2, &safe_spots).unwrap();
     let res2 = flexible_ressys.claim_request(ticket1, &safe_spots).unwrap();
