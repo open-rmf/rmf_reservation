@@ -103,7 +103,7 @@ fn shrink_reservation_request(
 }
 
 /// Solver for scenarios where there is a starting time range instead of a fixed starting time.
-/// Note: The solvers in this class currently ignore thestarting time range.
+/// Note: The solvers in this class currently ignore the cost of an alternative.
 /// You need to implement a clock source. The reason is that we needto have the current time as a starting point.
 pub struct SATFlexibleTimeModel<CS: ClockSource + std::marker::Send + std::marker::Sync> {
     pub clock_source: CS,

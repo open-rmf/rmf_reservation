@@ -10,7 +10,7 @@ use chrono::TimeZone;
 use chrono::Utc;
 use rmf_reservations::algorithms::greedy_solver::ConflictTracker;
 use rmf_reservations::algorithms::greedy_solver::Problem;
-use rmf_reservations::algorithms::sat::{generate_sat_devil, SATSolver};
+use rmf_reservations::algorithms::sat::{generate_sat_devil, FixedTimeSATSolver};
 use rmf_reservations::algorithms::sat_flexible_time_model;
 use rmf_reservations::algorithms::sat_flexible_time_model::SATFlexibleTimeModel;
 use rmf_reservations::cost_function::static_cost::StaticCost;
@@ -105,7 +105,7 @@ fn main() {
             let soln = system.generate_literals_and_remap_requests();
 
             let timer = SystemTime::now();
-            SATSolver::without_optimality_check(soln.clone());
+            FixedTimeSATSolver::without_optimality_check(soln.clone());
             let optimality_proof_dur = timer.elapsed();
 
             let sat_flexible_time_problem = sat_flexible_time_model::Problem { requests };

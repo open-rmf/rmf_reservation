@@ -1,3 +1,13 @@
+//! This is a library that provides a solver for constrained resource scheduling for multi-robot applications. More specifically,
+//! we provide a very simple formulation for resource optimization and scheduling. A robot may request the use of a
+//! resource like a charger for a fixed duration of time within a given time range. The system will then assign the robot
+//! to said resource.
+//!
+//! At 10,000ft the library solves the following problem:
+//! > Suppose you have n robots declaring that “I'd like to use one of (resource 1, resource 2, resource 3) for (d1, d2, d3) minutes starting at a certain time. Each alternative has some cost c(t).”
+//!
+//! To specify such a problem take a look at [ReservationRequestAlternative] which provides a wrapper around one such alternative.
+
 #![feature(btree_cursors)]
 #![feature(hasher_prefixfree_extras)]
 #![feature(test)]
