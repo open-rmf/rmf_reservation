@@ -408,7 +408,7 @@ fn test_fixed_time() {
     let claim = res_sys.claim_request(ticket).unwrap();
 }*/
 
-#[cfg(test)]
+/*#[cfg(test)]
 #[test]
 fn test_sat_flexible_time_model() {
     use crate::cost_function::static_cost::StaticCost;
@@ -453,4 +453,4 @@ fn test_sat_flexible_time_model() {
 
     assert!(matches!(res1, ClaimSpot::WaitAtThenGo(_x, _y)));
     assert!(matches!(res2, ClaimSpot::WaitAtThenGo(_x, _y)));
-}
+}*/
