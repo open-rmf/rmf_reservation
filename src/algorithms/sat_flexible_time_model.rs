@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::{atomic::AtomicBool, mpsc::Sender},
+    sync::{atomic::AtomicBool, mpsc::Sender}, time::SystemTime,
 };
 
 use itertools::Itertools;
@@ -147,6 +147,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
         sender: Sender<AlgorithmState>,
         stop: std::sync::Arc<AtomicBool>,
     ) {
+        println!("Started solve {:?}", SystemTime::now());
         let mut resources = HashMap::new();
         let mut id_to_resource = vec![];
         let mut var_list = HashMap::new();
@@ -319,6 +320,8 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                 }
             }
         }
+
+        println!("Set up constraints {:?}", SystemTime::now());
 
         let mut solver = Solver::new();
         solver.add_formula(&formula);
@@ -578,6 +581,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
         problem: &Problem,
         stop: std::sync::Arc<AtomicBool>,
     ) -> Result<HashMap<String, Vec<Assignment>>, FlexibleSatError> {
+        println!("Started solve {:?}", SystemTime::now());
         let mut resources = HashMap::new();
         let mut id_to_resource = vec![];
         let mut var_list = HashMap::new();
@@ -751,6 +755,8 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
             }
         }
 
+        println!("Set up constraints {:?}", SystemTime::now());
+
         let mut solver = Solver::new();
         solver.add_formula(&formula);
 
@@ -760,12 +766,17 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
 
         while !solved {
             if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                println!("Asked to stop");
                 return Err(FlexibleSatError::TimedOut);
             }
 
             final_schedule.clear();
 
+            println!("SAT call {:?}", SystemTime::now());
+
             solver.solve();
+
+            println!("SAT Finished {:?}", SystemTime::now());
 
             let Ok(k) = solver.solve() else {
                 println!("Failed to solve");

@@ -219,6 +219,7 @@ impl<ClockType: ClockSource + Clone + std::marker::Send + std::marker::Sync + 's
         &mut self,
         alternatives: Vec<ReservationRequestAlternative>,
     ) -> Result<Ticket, &'static str> {
+        println!("REcieved request {:?}", std::time::SystemTime::now());
         self.record.insert(self.max_id, alternatives);
         let result = Ticket { count: self.max_id };
         self.max_id += 1;
@@ -408,7 +409,9 @@ fn test_fixed_time() {
     let claim = res_sys.claim_request(ticket).unwrap();
 }*/
 
-/*#[cfg(test)]
+
+// TEST DISABLED BECAUSE ITS FLAKY.
+#[cfg(test)]
 #[test]
 fn test_sat_flexible_time_model() {
     use crate::cost_function::static_cost::StaticCost;
@@ -446,11 +449,11 @@ fn test_sat_flexible_time_model() {
     let safe_spots = vec!["1".to_string(), "2".to_string()];
 
     // 400 milliseconds is enough for the solver hopefully
-    std::thread::sleep(std::time::Duration::from_millis(5000));
+    std::thread::sleep(std::time::Duration::from_millis(500));
 
     let res1 = flexible_ressys.claim_request(ticket2, &safe_spots).unwrap();
     let res2 = flexible_ressys.claim_request(ticket1, &safe_spots).unwrap();
 
     assert!(matches!(res1, ClaimSpot::WaitAtThenGo(_x, _y)));
     assert!(matches!(res2, ClaimSpot::WaitAtThenGo(_x, _y)));
-}*/
+}
