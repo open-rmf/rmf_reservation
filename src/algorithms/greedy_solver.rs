@@ -529,8 +529,9 @@ impl Problem {
         conflicts
     }
 
-    /// Check conflict by remapping timelines
-    pub fn solve(
+    /// This solves reservation related problems by using a very simple greedy algorithm.
+    /// Only use this if the problem has an obvious solution.
+    pub fn naive_greedy_solver(
         &self,
         hint: HashMap<usize, usize, FnvBuildHasher>,
         stop: Arc<AtomicBool>,
@@ -591,22 +592,6 @@ impl Problem {
                 let mut negative_constraints = solution.negative_constraints.clone();
 
                 positive_constraints.insert(req_id, alt);
-
-                // Check starvation sets
-                /* let starved: bool = {
-                    let mut val = false;
-                    for starvation_group in &starvation_sets {
-                        let mut hashset = FnvHashSet::from_iter(positive_constraints.iter().map(|(k,v)| (*k, *v)));
-                        if hashset.intersection(&starvation_group.positive).count() == starvation_group.positive.len() {
-                            val =true;
-                        }
-                    }
-                    val
-                };
-                if starved {
-                    println!("Dropping solution cause it will starve resources");
-                    continue;
-                }*/
 
                 if let Some(banned_resources) = implications.get(&(req_id, alt)) {
                     negative_constraints.extend(
@@ -717,7 +702,7 @@ fn test_conflict_checker() {
     //println!("Generated literals");
     solver.debug_print();
     let stop = Arc::new(AtomicBool::new(false));
-    let (solution, _) = solver.solve(FnvHashMap::default(), stop).unwrap();
+    let (solution, _) = solver.naive_greedy_solver(FnvHashMap::default(), stop).unwrap();
     println!("{:?}", solution);
     assert!((solution.cost.0 - 8.0).abs() < 1.0);
 }
@@ -742,7 +727,7 @@ fn test_generation() {
     let soln = system.generate_literals_and_remap_requests();
     soln.debug_print();
     let arc = Arc::new(AtomicBool::new(false));
-    let _ = soln.solve(FnvHashMap::default(), arc).unwrap();
+    let _ = soln.naive_greedy_solver(FnvHashMap::default(), arc).unwrap();
     // Ok(())
     //});
 }
@@ -757,7 +742,7 @@ impl SolverAlgorithm<Problem> for GreedySolver {
         problem: Problem,
     ) {
         let hint = FnvHashMap::default();
-        let solution = problem.solve(hint, stop);
+        let solution = problem.naive_greedy_solver(hint, stop);
 
         if let Some((_, solution)) = solution {
             let solution = solution

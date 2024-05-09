@@ -1,3 +1,5 @@
+//! This module provides you with a list of potential algorithms you may use to solve a reservation problem
+
 use std::sync::mpsc::Receiver;
 use std::{
     collections::HashMap,
@@ -243,7 +245,7 @@ fn test_multisolver_algorithm_pool() {
         scenario_generation::generate_test_scenario_with_known_best,
     };
 
-    use self::sat::SATSolver;
+    use self::sat::FixedTimeSATSolver;
 
     let (requests, resources) = //generate_sat_devil(5,3);
     generate_test_scenario_with_known_best(10, 10, 5);
@@ -256,7 +258,7 @@ fn test_multisolver_algorithm_pool() {
     let problem = system.generate_literals_and_remap_requests();
 
     let mut pool = AlgorithmPool::default();
-    pool.add_algorithm(Arc::new(SATSolver));
+    pool.add_algorithm(Arc::new(FixedTimeSATSolver));
     pool.add_algorithm(Arc::new(GreedySolver));
     let mtx = Arc::new(Mutex::new(AlgorithmState::NotFound));
     pool.solve(problem, mtx);

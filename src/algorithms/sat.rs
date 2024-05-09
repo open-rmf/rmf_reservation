@@ -43,9 +43,12 @@ struct AssumptionList {
     assumptions: Vec<Vec<Lit>>,
 }
 
-pub struct SATSolver;
 
-impl SolverAlgorithm<Problem> for SATSolver {
+/// This solver assumes that each alternative has a fixed starting time. However, it does take into account
+/// the cost and can use an aribitrary cost function to solve.
+pub struct FixedTimeSATSolver;
+
+impl SolverAlgorithm<Problem> for FixedTimeSATSolver {
     fn iterative_solve(
         &self,
         result_channel: Sender<AlgorithmState>,
@@ -56,8 +59,8 @@ impl SolverAlgorithm<Problem> for SATSolver {
     }
 }
 
-impl SATSolver {
-    /// Set up the problem and solve it without any optimality check.
+impl FixedTimeSATSolver {
+    /// Set up the problem and find a feasible solution,
     pub fn without_optimality_check(problem: Problem) {
         let conflicts = problem.get_banned_reservation_combinations();
         let score_cache = problem.score_cache();
@@ -493,6 +496,6 @@ fn test_sat() {
     let timer = SystemTime::now();
     let (sender, rx) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
-    SATSolver::from_hill_climber_with_optimality_proof(soln.clone(), sender, stop);
+    FixedTimeSATSolver::from_hill_climber_with_optimality_proof(soln.clone(), sender, stop);
     let optimality_proof_dur = timer.elapsed();
 }

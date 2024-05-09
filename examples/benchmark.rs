@@ -11,7 +11,7 @@ use std::{fs::OpenOptions, time::SystemTime};
 
 use fnv::FnvHashMap;
 use rmf_reservations::algorithms::greedy_solver::ConflictTracker;
-use rmf_reservations::algorithms::sat::{generate_sat_devil, SATSolver};
+use rmf_reservations::algorithms::sat::{generate_sat_devil, FixedTimeSATSolver};
 use rmf_reservations::discretization;
 
 fn main() {
@@ -29,18 +29,18 @@ fn main() {
 
             let timer = SystemTime::now();
 
-            SATSolver::without_optimality_check(soln.clone());
+            FixedTimeSATSolver::without_optimality_check(soln.clone());
             let optimality_proof_dur = timer.elapsed();
 
             let timer = SystemTime::now();
-            SATSolver::from_hill_climber(soln.clone());
+            FixedTimeSATSolver::from_hill_climber(soln.clone());
             let brute_force_proof_dur = timer.elapsed();
 
             let hint = FnvHashMap::default();
             let timer = SystemTime::now();
 
             let stop = Arc::new(AtomicBool::new(false));
-            soln.solve(hint, stop);
+            soln.naive_greedy_solver(hint, stop);
             let greedy_dur = timer.elapsed();
 
             println!(

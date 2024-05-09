@@ -1,3 +1,7 @@
+//! This module handles state management of a system that turns the algorithms into an online
+//! reservation system. This part of the library is still unstable and undergoing frequent reworks.
+//! Ultimately this will be the module exposed to end users.
+
 use std::{collections::HashMap, default, fs::Metadata, hash::Hash, sync::Arc};
 
 use chrono::{DateTime, Duration, Utc};
@@ -6,7 +10,7 @@ use serde_derive::{Deserialize, Serialize};
 use crate::{
     algorithms::{
         greedy_solver::{ConflictTracker, GreedySolver, Problem},
-        sat::SATSolver,
+        sat::FixedTimeSATSolver,
         sat_flexible_time_model::{Assignment as FlexibleAssignment, SATFlexibleTimeModel},
         AlgorithmPool, AsyncExecutor,
     },
@@ -45,7 +49,7 @@ pub(crate) struct Snapshot<P, T = ()> {
     pub(crate) metadata: T,
 }
 
-/// A reservation system that
+/// This provides an abstract interface to the
 pub struct FixedTimeReservationSystem {
     resources: Vec<String>,
     record: HashMap<usize, Vec<ReservationRequestAlternative>>,
@@ -57,7 +61,7 @@ pub struct FixedTimeReservationSystem {
 impl FixedTimeReservationSystem {
     pub fn create_with_resources(resources: Vec<String>) -> Self {
         let mut alg_pool = AlgorithmPool::<Problem>::default();
-        alg_pool.add_algorithm(Arc::new(SATSolver));
+        alg_pool.add_algorithm(Arc::new(FixedTimeSATSolver));
         alg_pool.add_algorithm(Arc::new(GreedySolver));
 
         Self {
