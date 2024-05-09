@@ -43,7 +43,6 @@ struct AssumptionList {
     assumptions: Vec<Vec<Lit>>,
 }
 
-
 /// This solver assumes that each alternative has a fixed starting time. However, it does take into account
 /// the cost and can use an aribitrary cost function to solve.
 pub struct FixedTimeSATSolver;
