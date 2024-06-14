@@ -124,7 +124,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SolverAlgo
         stop: std::sync::Arc<AtomicBool>,
         problem: Problem,
     ) {
-        let Ok(problem) = self.feasbility_analysis(&problem, stop) else {
+        let Ok(problem) = self.feasibility_analysis(&problem, stop) else {
             result_channel.send(AlgorithmState::UnSolveable);
             return;
         };
@@ -573,7 +573,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
     /// - `stop` - Takes in an atomic boolean that allows you to stop the computation from another thread.
     /// Returns a result containing an example feasible schedule if OK. Otherwise, returns an error.
     /// The feasible schedule is a HashMap where the key of the hashmap is the resource and thevalue of the hashmap is the assigned alternative.
-    pub fn feasbility_analysis(
+    pub fn feasibility_analysis(
         &self,
         problem: &Problem,
         stop: std::sync::Arc<AtomicBool>,
@@ -965,7 +965,7 @@ fn test_flexible_one_item_sat_solver() {
     let model = SATFlexibleTimeModel {
         clock_source: DefaultUtcClock::default(),
     }
-    .feasbility_analysis(&problem, stop);
+    .feasibility_analysis(&problem, stop);
     let result = model.unwrap();
 
     assert_eq!(result.len(), 1usize);
@@ -1028,7 +1028,7 @@ fn test_flexible_two_items_sat_solver() {
     let model = SATFlexibleTimeModel {
         clock_source: DefaultUtcClock::default(),
     }
-    .feasbility_analysis(&problem, stop);
+    .feasibility_analysis(&problem, stop);
     let result = model.unwrap();
 
     assert_eq!(result.len(), 1usize);
@@ -1073,7 +1073,7 @@ fn test_flexible_n_items_sat_solver() {
     let model = SATFlexibleTimeModel {
         clock_source: DefaultUtcClock::default(),
     }
-    .feasbility_analysis(&problem, stop);
+    .feasibility_analysis(&problem, stop);
     let result = model.unwrap();
 
     assert_eq!(result.len(), 1usize);
@@ -1118,7 +1118,7 @@ fn test_flexible_no_soln_sat_solver() {
     let model = SATFlexibleTimeModel {
         clock_source: DefaultUtcClock::default(),
     }
-    .feasbility_analysis(&problem, stop);
+    .feasibility_analysis(&problem, stop);
     let result = model.unwrap();
 
     assert_eq!(result.len(), 1usize);
