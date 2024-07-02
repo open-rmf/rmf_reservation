@@ -48,7 +48,7 @@ For more details take a look at the tutorial:
 If you use this work in your research please cite:
 
 ```
-
+Arjo Chakravarty, Michael Grey, Viraj Jagathpriya Muthugala Muthugala Arachchige* and Mohan Rajesh Elara "From Concept to Field Tests: Accelerated Development of Multi-AUV Missions Using a High-Fidelity Faster-than-Real-Time Simulator," in IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS), Oct 2024.
 ```
 
 ## Roadmap
