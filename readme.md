@@ -50,7 +50,7 @@ If you use this work in your research please cite:
 ```
 Arjo Chakravarty, Michael Grey, Viraj Jagathpriya Muthugala Muthugala Arachchige* and Mohan Rajesh Elara "Time-Ordered Ad-hoc Resource Sharing for Independent Robotic Agents," in IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS), Oct 2024.
 ```
-
+Preprint available: https://arxiv.org/abs/2408.07942
 ## Roadmap
 
 * [ ] Cancel reservations
