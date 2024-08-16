@@ -1,6 +1,6 @@
 # RMF Reservations
 
-:warning: This Library is under active delopment. The documentation here is not ready for release.
+> :warning: This Library is under active development. The documentation here is not ready for release.
 
 This is a library that provides a solver for constrained resource scheduling for multi-robot applications. More specifically,
 we provide a very simple formulation for resource optimization and scheduling. A robot may request the use of a
