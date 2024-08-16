@@ -1,5 +1,7 @@
 # RMF Reservations
 
+:warning: This Library is under active delopment. The documentation here is not ready for release.
+
 This is a library that provides a solver for constrained resource scheduling for multi-robot applications. More specifically,
 we provide a very simple formulation for resource optimization and scheduling. A robot may request the use of a
 resource like a charger for a fixed duration of time within a given time range. The system will then assign the robot
