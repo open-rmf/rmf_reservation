@@ -22,6 +22,12 @@ pub struct Problem {
     /// A vector of requests. A solved problem will satisfy at least one "alternative"
     /// within a request.
     pub requests: Vec<Vec<ReservationRequestAlternative>>,
+
+    /// Dependency one of the
+    pub one_of_dependencies: Vec<Vec<(usize, usize)>>,
+
+    /// Dependency of the form (a, b) where a is the request id and b is the alternative id.
+    pub dependencies: Vec<((usize, usize), (usize, usize))>
 }
 
 impl Problem {
@@ -959,6 +965,8 @@ fn test_flexible_one_item_sat_solver() {
 
     let problem = Problem {
         requests: vec![req1],
+        one_of_dependencies: vec![],
+        dependencies: vec![]
     };
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -1022,6 +1030,8 @@ fn test_flexible_two_items_sat_solver() {
 
     let problem = Problem {
         requests: vec![req1, req2],
+        one_of_dependencies: vec![],
+        dependencies: vec![]
     };
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -1067,7 +1077,7 @@ fn test_flexible_n_items_sat_solver() {
         }]);
     }
 
-    let problem = Problem { requests };
+    let problem = Problem { requests, dependencies: vec![], one_of_dependencies: vec![] };
 
     let stop = Arc::new(AtomicBool::new(false));
     let model = SATFlexibleTimeModel {
@@ -1112,7 +1122,7 @@ fn test_flexible_no_soln_sat_solver() {
         }]);
     }
 
-    let problem = Problem { requests };
+    let problem = Problem { requests, one_of_dependencies: vec![], dependencies: vec![] };
 
     let stop = Arc::new(AtomicBool::new(false));
     let model = SATFlexibleTimeModel {
