@@ -37,6 +37,14 @@ impl Problem {
         self.requests.push(alternatives);
         return self.requests.len() - 1;
     }
+
+    pub fn implies(&mut self, a: &(usize, usize), b: &(usize, usize)) -> Result<(),String> {
+        if a.0 >= self.requests.len() || a.1 >= self.requests[a.0].len() || b.0 >= self.requests.len() || b.1 >= self.requests[b.0].len() {
+            return Err("Request and alternative was not found.".to_string())
+        }
+        self.dependencies.push((*a,*b));
+        Ok(())
+    } 
 }
 
 /// Snapshot of a solution. A solved schedule contains a list of assingments for each resource
@@ -234,6 +242,17 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
             }
         }
 
+        for dep  in problem.dependencies.iter() {
+            let (x1, x2) = dep;
+            let Some(x_ij) = var_list.get(x1) else {
+                panic!("Could not find variable");
+            };
+            let Some(x_km) = var_list.get(x1) else {
+                panic!("Could not get variable");
+            };
+            formula.add_clause(&[x_ij.negative(), Lit::from_var(*x_km, true)]);
+        }
+
         // Strict Total Order constraints
         for (_, alternatives) in var_by_resource.iter() {
             for i in 0..alternatives.len() {
@@ -375,12 +394,13 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                             if let Some(alt_ij_shrink) = alt_ij_shrink {
                                 if let Some(alt_km_shrink) = alt_km_shrink {
                                     let Some(list_ij) = comes_after_vars.get(&alt_ij) else {
-                                        panic!("For some reason");
+                                        panic!("For some reason unable to get comes after vars");
                                     };
 
                                     let X_ijkm = list_ij.get(&alt_km).expect("");
                                     let Some(list_km) = comes_after_vars.get(&alt_km) else {
-                                        panic!("For some reason");
+                                        panic!("For some reason unable to get comes after vars
+                                        ");
                                     };
 
                                     let X_kmij = list_km.get(&alt_ij).expect("");
