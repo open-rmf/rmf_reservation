@@ -27,7 +27,7 @@ pub struct Problem {
     pub one_of_dependencies: Vec<Vec<(usize, usize)>>,
 
     /// Dependency of the form (a, b) where a is the request id and b is the alternative id.
-    pub dependencies: Vec<((usize, usize), (usize, usize))>
+    pub dependencies: Vec<((usize, usize), (usize, usize))>,
 }
 
 impl Problem {
@@ -38,13 +38,17 @@ impl Problem {
         return self.requests.len() - 1;
     }
 
-    pub fn implies(&mut self, a: &(usize, usize), b: &(usize, usize)) -> Result<(),String> {
-        if a.0 >= self.requests.len() || a.1 >= self.requests[a.0].len() || b.0 >= self.requests.len() || b.1 >= self.requests[b.0].len() {
-            return Err("Request and alternative was not found.".to_string())
+    pub fn implies(&mut self, a: &(usize, usize), b: &(usize, usize)) -> Result<(), String> {
+        if a.0 >= self.requests.len()
+            || a.1 >= self.requests[a.0].len()
+            || b.0 >= self.requests.len()
+            || b.1 >= self.requests[b.0].len()
+        {
+            return Err("Request and alternative was not found.".to_string());
         }
-        self.dependencies.push((*a,*b));
+        self.dependencies.push((*a, *b));
         Ok(())
-    } 
+    }
 }
 
 /// Snapshot of a solution. A solved schedule contains a list of assingments for each resource
@@ -244,7 +248,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
             }
         }
 
-        for dep  in problem.dependencies.iter() {
+        for dep in problem.dependencies.iter() {
             let (x1, x2) = dep;
             let Some(x_ij) = var_list.get(x1) else {
                 panic!("Could not find variable");
@@ -364,7 +368,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
 
             final_schedule.clear();
 
-            // Shrink the time window. Recalculate 
+            // Shrink the time window. Recalculate
             if let Some(time_window) = time_window {
                 println!("Attempting shrink");
                 let mut formula = varisat::CnfFormula::new();
@@ -403,8 +407,10 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
 
                                     let X_ijkm = list_ij.get(&alt_km).expect("");
                                     let Some(list_km) = comes_after_vars.get(&alt_km) else {
-                                        panic!("For some reason unable to get comes after vars
-                                        ");
+                                        panic!(
+                                            "For some reason unable to get comes after vars
+                                        "
+                                        );
                                     };
 
                                     let X_kmij = list_km.get(&alt_ij).expect("");
@@ -519,12 +525,11 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                     let alternative = &problem.requests[sched[i].0][sched[i].1];
 
                     let Some(duration) = alternative.parameters.duration else {
-                        if i + 1 == sched.len() {
+                        if i + 1 < sched.len() {
                             if let Some(latest) = alternative.parameters.start_time.latest_start {
                                 if last_reservation_end > latest {
-                                    
                                     // Add a banning of this specific ordering [Exponential bomb if ordering is too long]
-                                    for (j,k) in (last_gap..i).tuple_windows() {
+                                    for (j, k) in (last_gap..i).tuple_windows() {
                                         let j_id = sched[j];
                                         let Some(vars) = comes_after_vars.get(&j_id) else {
                                             continue;
@@ -532,11 +537,15 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
 
                                         let mut transitive_pairs = vec![];
 
-                                        for (id, j_var )in vars.iter() {
-                                            if *id == sched[j] || *id ==sched[k] {
+                                        for (id, j_var) in vars.iter() {
+                                            if *id == sched[j] || *id == sched[k] {
                                                 continue;
                                             }
-                                            if problem.requests[id.0][id.1].parameters.resource_name != problem.requests[j_id.0][j_id.1].parameters.resource_name  {
+                                            if problem.requests[id.0][id.1].parameters.resource_name
+                                                != problem.requests[j_id.0][j_id.1]
+                                                    .parameters
+                                                    .resource_name
+                                            {
                                                 continue;
                                             }
                                             let Some(other) = comes_after_vars.get(&id) else {
@@ -561,20 +570,20 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                                             for y in 0..transitive_pairs.len() {
                                                 if (1 << y) & x != 0 {
                                                     clause.push(transitive_pairs[y].0);
-                                                }
-                                                else {
+                                                } else {
                                                     clause.push(transitive_pairs[y].1);
                                                 }
                                             }
 
-                                            let mut formula = vec![Lit::from_var(*not_allowed_next, false)];
+                                            let mut formula =
+                                                vec![Lit::from_var(*not_allowed_next, false)];
                                             for i in clause {
                                                 formula.push(Lit::from_var(*i, true));
                                             }
                                             learned_clauses.push(formula);
                                         }
                                     }
-                                    
+
                                     /*let mut formula = vec![];
                                     for j in last_gap..i {
                                         let v = var_list
@@ -583,6 +592,10 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                                         formula.push(Lit::from_var(*v, false));
                                     }*/
                                     //learned_clauses.push(formula);
+                                } else {
+                                    if last_reservation_end != latest {
+                                        last_gap = i;
+                                    }
                                 }
                             }
                             continue;
@@ -632,7 +645,9 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
 
             println!("learned_clauses {:?}", learned_clauses.len());
             if learned_clauses.len() == 0 {
-                sender.send(AlgorithmState::FeasibleScheduleSolution(final_schedule.clone()));
+                sender.send(AlgorithmState::FeasibleScheduleSolution(
+                    final_schedule.clone(),
+                ));
             }
 
             for clause in learned_clauses {
@@ -650,11 +665,13 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                     })
                     .max();
                 // We also don't want the same solution
-                let banned_assignment: Vec<_> = final_schedule.iter()
-                    .map(|(_,assignment)| assignment.iter()).flatten()
-                    .map(|p| Lit::from_var(var_list[&p.id], false)).collect();
+                let banned_assignment: Vec<_> = final_schedule
+                    .iter()
+                    .map(|(_, assignment)| assignment.iter())
+                    .flatten()
+                    .map(|p| Lit::from_var(var_list[&p.id], false))
+                    .collect();
                 solver.add_clause(&banned_assignment);
-
             } else {
                 println!("Could not solve");
                 ok = false;
@@ -1079,9 +1096,7 @@ fn test_multi_item_sat_solver() {
     for t in rx.iter() {
         println!("{:?}", t)
     }
-} 
-
-
+}
 
 #[cfg(test)]
 #[test]
@@ -1109,7 +1124,7 @@ fn test_flexible_one_item_sat_solver() {
     let problem = Problem {
         requests: vec![req1],
         one_of_dependencies: vec![],
-        dependencies: vec![]
+        dependencies: vec![],
     };
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -1174,7 +1189,7 @@ fn test_flexible_two_items_sat_solver() {
     let problem = Problem {
         requests: vec![req1, req2],
         one_of_dependencies: vec![],
-        dependencies: vec![]
+        dependencies: vec![],
     };
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -1220,7 +1235,11 @@ fn test_flexible_n_items_sat_solver() {
         }]);
     }
 
-    let problem = Problem { requests, dependencies: vec![], one_of_dependencies: vec![] };
+    let problem = Problem {
+        requests,
+        dependencies: vec![],
+        one_of_dependencies: vec![],
+    };
 
     let stop = Arc::new(AtomicBool::new(false));
     let model = SATFlexibleTimeModel {
@@ -1265,7 +1284,11 @@ fn test_flexible_no_soln_sat_solver() {
         }]);
     }
 
-    let problem = Problem { requests, one_of_dependencies: vec![], dependencies: vec![] };
+    let problem = Problem {
+        requests,
+        one_of_dependencies: vec![],
+        dependencies: vec![],
+    };
 
     let stop = Arc::new(AtomicBool::new(false));
     let model = SATFlexibleTimeModel {

@@ -108,7 +108,11 @@ fn main() {
             FixedTimeSATSolver::without_optimality_check(soln.clone());
             let optimality_proof_dur = timer.elapsed();
 
-            let sat_flexible_time_problem = sat_flexible_time_model::Problem { requests, dependencies: vec![] , one_of_dependencies: vec![]};
+            let sat_flexible_time_problem = sat_flexible_time_model::Problem {
+                requests,
+                dependencies: vec![],
+                one_of_dependencies: vec![],
+            };
 
             let stop = Arc::new(AtomicBool::new(false));
 
