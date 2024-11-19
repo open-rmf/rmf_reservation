@@ -17,7 +17,7 @@ use super::{AlgorithmState, SolverAlgorithm};
 /// Snapshot of requests that need to be solved.
 ///
 /// This is how you specify a problem set that needs solving.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Problem {
     /// A vector of requests. A solved problem will satisfy at least one "alternative"
     /// within a request.
@@ -138,12 +138,14 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SolverAlgo
         stop: std::sync::Arc<AtomicBool>,
         problem: Problem,
     ) {
-        let Ok(problem) = self.feasibility_analysis(&problem, stop) else {
+        let Ok(feasible_solution) = self.feasibility_analysis(&problem, stop.clone()) else {
             result_channel.send(AlgorithmState::UnSolveable);
             return;
         };
 
-        result_channel.send(AlgorithmState::FeasibleScheduleSolution(problem));
+        result_channel.send(AlgorithmState::FeasibleScheduleSolution(feasible_solution));
+
+        self.time_optimality_solver(&problem, result_channel, stop);
     }
 }
 
@@ -362,7 +364,9 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
 
             final_schedule.clear();
 
+            // Shrink the time window. Recalculate 
             if let Some(time_window) = time_window {
+                println!("Attempting shrink");
                 let mut formula = varisat::CnfFormula::new();
                 for (_, alternatives) in var_by_resource.iter() {
                     for i in 0..alternatives.len() {
@@ -385,7 +389,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                                 formula.add_clause(&[Lit::from_var(*x_ij, false)]);
                             }
 
-                            if alt_ij_shrink.is_none() {
+                            if alt_km_shrink.is_none() {
                                 // Ban the entire alternative
                                 let x_km = var_list.get(&alt_km).expect("Something went wrong");
                                 formula.add_clause(&[Lit::from_var(*x_km, false)]);
@@ -424,7 +428,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                 }
             }
 
-            solver.solve();
+            println!("Solving");
 
             let Ok(k) = solver.solve() else {
                 println!("Failed to solve");
@@ -439,6 +443,8 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
             let Some(model) = solver.model() else {
                 break;
             };
+
+            println!("Reconstructing proposed schedule");
 
             let mut edges = vec![];
             let mut vertices = vec![];
@@ -476,7 +482,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                 );
             }
             let Ok(res) = toposort(&pgraph, None) else {
-                panic!("Sometthing wrong with SAT formula found cycle.");
+                panic!("Something wrong with SAT formula found cycle.");
             };
             let order: Vec<_> = res
                 .iter()
@@ -516,17 +522,67 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                         if i + 1 == sched.len() {
                             if let Some(latest) = alternative.parameters.start_time.latest_start {
                                 if last_reservation_end > latest {
-                                    // TODO(back track)
-                                    println!("Timed out {}, {}", latest, last_reservation_end);
-                                    let mut formula = vec![];
+                                    
+                                    // Add a banning of this specific ordering [Exponential bomb if ordering is too long]
+                                    for (j,k) in (last_gap..i).tuple_windows() {
+                                        let j_id = sched[j];
+                                        let Some(vars) = comes_after_vars.get(&j_id) else {
+                                            continue;
+                                        };
+
+                                        let mut transitive_pairs = vec![];
+
+                                        for (id, j_var )in vars.iter() {
+                                            if *id == sched[j] || *id ==sched[k] {
+                                                continue;
+                                            }
+                                            if problem.requests[id.0][id.1].parameters.resource_name != problem.requests[j_id.0][j_id.1].parameters.resource_name  {
+                                                continue;
+                                            }
+                                            let Some(other) = comes_after_vars.get(&id) else {
+                                                panic!("Could not get");
+                                            };
+                                            let Some(k_var) = other.get(&sched[k]) else {
+                                                continue;
+                                            };
+                                            transitive_pairs.push((j_var, k_var));
+                                        }
+
+                                        if transitive_pairs.len() > 12 {
+                                            panic!("Problem is too congested to solve");
+                                        }
+
+                                        let Some(not_allowed_next) = vars.get(&sched[k]) else {
+                                            continue;
+                                        };
+
+                                        for x in 0..2_i32.pow(transitive_pairs.len() as u32) {
+                                            let mut clause = vec![];
+                                            for y in 0..transitive_pairs.len() {
+                                                if (1 << y) & x != 0 {
+                                                    clause.push(transitive_pairs[y].0);
+                                                }
+                                                else {
+                                                    clause.push(transitive_pairs[y].1);
+                                                }
+                                            }
+
+                                            let mut formula = vec![Lit::from_var(*not_allowed_next, false)];
+                                            for i in clause {
+                                                formula.push(Lit::from_var(*i, true));
+                                            }
+                                            learned_clauses.push(formula);
+                                        }
+                                    }
+                                    
+                                    /*let mut formula = vec![];
                                     for j in last_gap..i {
                                         let v = var_list
                                             .get(&sched[j])
                                             .expect("Could not get reservation end");
                                         formula.push(Lit::from_var(*v, false));
-                                    }
-                                    learned_clauses.push(formula);
-                                    ok = false;
+                                    }*/
+                                    //learned_clauses.push(formula);
                                 }
                             }
                             continue;
@@ -574,11 +630,17 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                 }
             }
 
+            println!("learned_clauses {:?}", learned_clauses.len());
+            if learned_clauses.len() == 0 {
+                sender.send(AlgorithmState::FeasibleScheduleSolution(final_schedule.clone()));
+            }
+
             for clause in learned_clauses {
                 solver.add_clause(&clause);
             }
 
             if ok {
+                println!("{:?}", final_schedule);
                 time_window = final_schedule
                     .iter()
                     .filter(|(_resource, assignment)| assignment.len() != 0)
@@ -587,8 +649,15 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                         assignment.start_time
                     })
                     .max();
+                // We also don't want the same solution
+                let banned_assignment: Vec<_> = final_schedule.iter()
+                    .map(|(_,assignment)| assignment.iter()).flatten()
+                    .map(|p| Lit::from_var(var_list[&p.id], false)).collect();
+                solver.add_clause(&banned_assignment);
+
             } else {
                 println!("Could not solve");
+                ok = false;
             }
         }
     }
@@ -959,6 +1028,60 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
         }
     }
 }
+
+#[cfg(test)]
+#[test]
+fn test_multi_item_sat_solver() {
+    use std::sync::Arc;
+
+    use crate::cost_function::static_cost;
+
+    use crate::database::DefaultUtcClock;
+
+    let current_time = chrono::Utc::now();
+
+    let req1 = vec![ReservationRequestAlternative {
+        parameters: crate::ReservationParameters {
+            resource_name: "Resource1".to_string(),
+            duration: Some(chrono::Duration::seconds(100)),
+            start_time: crate::StartTimeRange {
+                earliest_start: Some(current_time + chrono::Duration::seconds(50)),
+                latest_start: Some(current_time + chrono::Duration::seconds(120)),
+            },
+        },
+        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+    }];
+
+    let req2 = vec![ReservationRequestAlternative {
+        parameters: crate::ReservationParameters {
+            resource_name: "Resource1".to_string(),
+            duration: Some(chrono::Duration::seconds(100)),
+            start_time: crate::StartTimeRange {
+                earliest_start: Some(current_time + chrono::Duration::seconds(50)),
+                latest_start: Some(current_time + chrono::Duration::seconds(160)),
+            },
+        },
+        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+    }];
+
+    let mut problem = Problem::default();
+    problem.request_one_of(req1);
+    problem.request_one_of(req2);
+
+    println!("sonfoweinf");
+
+    let (sender, rx) = std::sync::mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    SATFlexibleTimeModel {
+        clock_source: DefaultUtcClock::default(),
+    }
+    .time_optimality_solver(&problem, sender, stop);
+    for t in rx.iter() {
+        println!("{:?}", t)
+    }
+} 
+
+
 
 #[cfg(test)]
 #[test]
