@@ -591,15 +591,6 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                                             learned_clauses.push(formula);
                                         }
                                     }
-
-                                    /*let mut formula = vec![];
-                                    for j in last_gap..i {
-                                        let v = var_list
-                                            .get(&sched[j])
-                                            .expect("Could not get reservation end");
-                                        formula.push(Lit::from_var(*v, false));
-                                    }*/
-                                    //learned_clauses.push(formula);
                                 } else {
                                     if last_reservation_end != latest {
                                         last_gap = i;
