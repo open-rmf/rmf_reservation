@@ -359,6 +359,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
         let current_time = self.clock_source.now();
 
         let mut time_window = None;
+        let mut prev_schedule = HashMap::new();
 
         while !solved {
             if stop.load(std::sync::atomic::Ordering::Relaxed) {
@@ -366,7 +367,8 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                 return;
             }
 
-            final_schedule.clear();
+            prev_schedule = final_schedule;
+            final_schedule = HashMap::new();
 
             // Shrink the time window. Recalculate
             if let Some(time_window) = time_window {
@@ -387,8 +389,13 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                                 time_window,
                             );
 
+                            println!("Shrinking to");
+                            println!("{:?}", alt_ij_shrink);
+                            println!("{:?}", alt_km_shrink);
+
                             if alt_ij_shrink.is_none() {
                                 // Ban the entire alternative
+                                
                                 let x_ij = var_list.get(&alt_ij).expect("Something went wrong");
                                 formula.add_clause(&[Lit::from_var(*x_ij, false)]);
                             }
@@ -432,6 +439,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                         }
                     }
                 }
+                solver.add_formula(&formula);
             }
 
             println!("Solving");
@@ -664,6 +672,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                         assignment.start_time
                     })
                     .max();
+                println!("Setting new time window to be less than {:?}", time_window);
                 // We also don't want the same solution
                 let banned_assignment: Vec<_> = final_schedule
                     .iter()
@@ -677,6 +686,9 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                 ok = false;
             }
         }
+        sender.send(AlgorithmState::OptimalScheduleSolution(
+            prev_schedule.clone()
+        ));
     }
 
     /// Checks if a set of requests is feasible. Given a problem we see if there is a way to schedule the solution while ignoring the
@@ -1080,6 +1092,70 @@ fn test_multi_item_sat_solver() {
         },
         cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
     }];
+
+    let mut problem = Problem::default();
+    problem.request_one_of(req1);
+    problem.request_one_of(req2);
+
+    println!("sonfoweinf");
+
+    let (sender, rx) = std::sync::mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    SATFlexibleTimeModel {
+        clock_source: DefaultUtcClock::default(),
+    }
+    .time_optimality_solver(&problem, sender, stop);
+    for t in rx.iter() {
+        println!("{:?}", t)
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_multi_alternative_sat_solver() {
+    use std::sync::Arc;
+
+    use crate::cost_function::static_cost;
+
+    use crate::database::DefaultUtcClock;
+
+    let current_time = chrono::Utc::now();
+
+    let req1 = vec![ReservationRequestAlternative {
+        parameters: crate::ReservationParameters {
+            resource_name: "Resource1".to_string(),
+            duration: Some(chrono::Duration::seconds(100)),
+            start_time: crate::StartTimeRange {
+                earliest_start: Some(current_time + chrono::Duration::seconds(50)),
+                latest_start: Some(current_time + chrono::Duration::seconds(120)),
+            },
+        },
+        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+    }];
+
+    let req2 = vec![ReservationRequestAlternative {
+        parameters: crate::ReservationParameters {
+            resource_name: "Resource1".to_string(),
+            duration: Some(chrono::Duration::seconds(100)),
+            start_time: crate::StartTimeRange {
+                earliest_start: Some(current_time + chrono::Duration::seconds(150)),
+                latest_start: Some(current_time + chrono::Duration::seconds(160)),
+            },
+        },
+        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+    },
+    ReservationRequestAlternative {
+        parameters: crate::ReservationParameters {
+            resource_name: "Resource2".to_string(),
+            duration: Some(chrono::Duration::seconds(100)),
+            start_time: crate::StartTimeRange {
+                earliest_start: Some(current_time + chrono::Duration::seconds(50)),
+                latest_start: Some(current_time + chrono::Duration::seconds(160)),
+            },
+        },
+        cost_function: Arc::new(static_cost::StaticCost::new(1.0))}
+    
+    ];
 
     let mut problem = Problem::default();
     problem.request_one_of(req1);
