@@ -396,7 +396,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
 
                             if alt_ij_shrink.is_none() {
                                 // Ban the entire alternative
-                                
+
                                 let x_ij = var_list.get(&alt_ij).expect("Something went wrong");
                                 formula.add_clause(&[Lit::from_var(*x_ij, false)]);
                             }
@@ -679,7 +679,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
             }
         }
         sender.send(AlgorithmState::OptimalScheduleSolution(
-            prev_schedule.clone()
+            prev_schedule.clone(),
         ));
     }
 
@@ -1089,7 +1089,6 @@ fn test_multi_item_sat_solver() {
     problem.request_one_of(req1);
     problem.request_one_of(req2);
 
-
     let (sender, rx) = std::sync::mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
     SATFlexibleTimeModel {
@@ -1124,34 +1123,34 @@ fn test_multi_alternative_sat_solver() {
         cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
     }];
 
-    let req2 = vec![ReservationRequestAlternative {
-        parameters: crate::ReservationParameters {
-            resource_name: "Resource1".to_string(),
-            duration: Some(chrono::Duration::seconds(100)),
-            start_time: crate::StartTimeRange {
-                earliest_start: Some(current_time + chrono::Duration::seconds(150)),
-                latest_start: Some(current_time + chrono::Duration::seconds(160)),
+    let req2 = vec![
+        ReservationRequestAlternative {
+            parameters: crate::ReservationParameters {
+                resource_name: "Resource1".to_string(),
+                duration: Some(chrono::Duration::seconds(100)),
+                start_time: crate::StartTimeRange {
+                    earliest_start: Some(current_time + chrono::Duration::seconds(150)),
+                    latest_start: Some(current_time + chrono::Duration::seconds(160)),
+                },
             },
+            cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
         },
-        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
-    },
-    ReservationRequestAlternative {
-        parameters: crate::ReservationParameters {
-            resource_name: "Resource2".to_string(),
-            duration: Some(chrono::Duration::seconds(100)),
-            start_time: crate::StartTimeRange {
-                earliest_start: Some(current_time + chrono::Duration::seconds(50)),
-                latest_start: Some(current_time + chrono::Duration::seconds(160)),
+        ReservationRequestAlternative {
+            parameters: crate::ReservationParameters {
+                resource_name: "Resource2".to_string(),
+                duration: Some(chrono::Duration::seconds(100)),
+                start_time: crate::StartTimeRange {
+                    earliest_start: Some(current_time + chrono::Duration::seconds(50)),
+                    latest_start: Some(current_time + chrono::Duration::seconds(160)),
+                },
             },
+            cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
         },
-        cost_function: Arc::new(static_cost::StaticCost::new(1.0))}
-    
     ];
 
     let mut problem = Problem::default();
     problem.request_one_of(req1);
     problem.request_one_of(req2);
-
 
     let (sender, rx) = std::sync::mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
@@ -1159,7 +1158,7 @@ fn test_multi_alternative_sat_solver() {
         clock_source: DefaultUtcClock::default(),
     }
     .time_optimality_solver(&problem, sender, stop);
-    let mut v =vec![];
+    let mut v = vec![];
     for t in rx.iter() {
         v.push(t);
     }
@@ -1178,7 +1177,6 @@ fn test_multi_alternative_sat_solver() {
     assert_eq!(sched["Resource2"].len(), 1usize);
     assert_eq!(sched.len(), 2usize);
 }
-
 
 #[cfg(test)]
 #[test]
@@ -1203,28 +1201,29 @@ fn test_multi_alternative_sat_solver_with_dep() {
         cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
     }];
 
-    let req2 = vec![ReservationRequestAlternative {
-        parameters: crate::ReservationParameters {
-            resource_name: "Resource1".to_string(),
-            duration: Some(chrono::Duration::seconds(100)),
-            start_time: crate::StartTimeRange {
-                earliest_start: Some(current_time + chrono::Duration::seconds(150)),
-                latest_start: Some(current_time + chrono::Duration::seconds(160)),
+    let req2 = vec![
+        ReservationRequestAlternative {
+            parameters: crate::ReservationParameters {
+                resource_name: "Resource1".to_string(),
+                duration: Some(chrono::Duration::seconds(100)),
+                start_time: crate::StartTimeRange {
+                    earliest_start: Some(current_time + chrono::Duration::seconds(150)),
+                    latest_start: Some(current_time + chrono::Duration::seconds(160)),
+                },
             },
+            cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
         },
-        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
-    },
-    ReservationRequestAlternative {
-        parameters: crate::ReservationParameters {
-            resource_name: "Resource2".to_string(),
-            duration: Some(chrono::Duration::seconds(100)),
-            start_time: crate::StartTimeRange {
-                earliest_start: Some(current_time + chrono::Duration::seconds(50)),
-                latest_start: Some(current_time + chrono::Duration::seconds(160)),
+        ReservationRequestAlternative {
+            parameters: crate::ReservationParameters {
+                resource_name: "Resource2".to_string(),
+                duration: Some(chrono::Duration::seconds(100)),
+                start_time: crate::StartTimeRange {
+                    earliest_start: Some(current_time + chrono::Duration::seconds(50)),
+                    latest_start: Some(current_time + chrono::Duration::seconds(160)),
+                },
             },
+            cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
         },
-        cost_function: Arc::new(static_cost::StaticCost::new(1.0))}
-    
     ];
 
     let mut problem = Problem::default();
@@ -1234,7 +1233,6 @@ fn test_multi_alternative_sat_solver_with_dep() {
     problem.implies(&(req1_id, 0), &(req2_id, 0));
     problem.implies(&(req2_id, 0), &(req1_id, 0));
 
-
     let (sender, rx) = std::sync::mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
     SATFlexibleTimeModel {
@@ -1242,7 +1240,7 @@ fn test_multi_alternative_sat_solver_with_dep() {
     }
     .time_optimality_solver(&problem, sender, stop);
 
-    let mut v =vec![];
+    let mut v = vec![];
     for t in rx.iter() {
         v.push(t);
     }
@@ -1260,7 +1258,6 @@ fn test_multi_alternative_sat_solver_with_dep() {
     assert_eq!(sched["Resource1"][1].id, (1usize, 0usize));
     assert_eq!(sched.len(), 1usize);
 }
-
 
 #[cfg(test)]
 #[test]
