@@ -248,12 +248,13 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
             }
         }
 
+        /// Dependency requirements
         for dep in problem.dependencies.iter() {
             let (x1, x2) = dep;
             let Some(x_ij) = var_list.get(x1) else {
                 panic!("Could not find variable");
             };
-            let Some(x_km) = var_list.get(x1) else {
+            let Some(x_km) = var_list.get(x2) else {
                 panic!("Could not get variable");
             };
             formula.add_clause(&[x_ij.negative(), Lit::from_var(*x_km, true)]);
@@ -1088,7 +1089,6 @@ fn test_multi_item_sat_solver() {
     problem.request_one_of(req1);
     problem.request_one_of(req2);
 
-    println!("sonfoweinf");
 
     let (sender, rx) = std::sync::mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
@@ -1152,7 +1152,6 @@ fn test_multi_alternative_sat_solver() {
     problem.request_one_of(req1);
     problem.request_one_of(req2);
 
-    println!("sonfoweinf");
 
     let (sender, rx) = std::sync::mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
@@ -1160,10 +1159,108 @@ fn test_multi_alternative_sat_solver() {
         clock_source: DefaultUtcClock::default(),
     }
     .time_optimality_solver(&problem, sender, stop);
+    let mut v =vec![];
     for t in rx.iter() {
-        println!("{:?}", t)
+        v.push(t);
     }
+
+    let Some(last) = v.last() else {
+        panic!("Unable to get any solution");
+    };
+
+    let AlgorithmState::OptimalScheduleSolution(sched) = last else {
+        panic!("Optimal solution was not found");
+    };
+
+    assert_eq!(sched["Resource1"][0].id, (0usize, 0usize));
+    assert_eq!(sched["Resource1"].len(), 1usize);
+    assert_eq!(sched["Resource2"][0].id, (1usize, 1usize));
+    assert_eq!(sched["Resource2"].len(), 1usize);
+    assert_eq!(sched.len(), 2usize);
 }
+
+
+#[cfg(test)]
+#[test]
+fn test_multi_alternative_sat_solver_with_dep() {
+    use std::sync::Arc;
+
+    use crate::cost_function::static_cost;
+
+    use crate::database::DefaultUtcClock;
+
+    let current_time = chrono::Utc::now();
+
+    let req1 = vec![ReservationRequestAlternative {
+        parameters: crate::ReservationParameters {
+            resource_name: "Resource1".to_string(),
+            duration: Some(chrono::Duration::seconds(100)),
+            start_time: crate::StartTimeRange {
+                earliest_start: Some(current_time + chrono::Duration::seconds(50)),
+                latest_start: Some(current_time + chrono::Duration::seconds(120)),
+            },
+        },
+        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+    }];
+
+    let req2 = vec![ReservationRequestAlternative {
+        parameters: crate::ReservationParameters {
+            resource_name: "Resource1".to_string(),
+            duration: Some(chrono::Duration::seconds(100)),
+            start_time: crate::StartTimeRange {
+                earliest_start: Some(current_time + chrono::Duration::seconds(150)),
+                latest_start: Some(current_time + chrono::Duration::seconds(160)),
+            },
+        },
+        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+    },
+    ReservationRequestAlternative {
+        parameters: crate::ReservationParameters {
+            resource_name: "Resource2".to_string(),
+            duration: Some(chrono::Duration::seconds(100)),
+            start_time: crate::StartTimeRange {
+                earliest_start: Some(current_time + chrono::Duration::seconds(50)),
+                latest_start: Some(current_time + chrono::Duration::seconds(160)),
+            },
+        },
+        cost_function: Arc::new(static_cost::StaticCost::new(1.0))}
+    
+    ];
+
+    let mut problem = Problem::default();
+    let req1_id = problem.request_one_of(req1);
+    let req2_id = problem.request_one_of(req2);
+
+    problem.implies(&(req1_id, 0), &(req2_id, 0));
+    problem.implies(&(req2_id, 0), &(req1_id, 0));
+
+
+    let (sender, rx) = std::sync::mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    SATFlexibleTimeModel {
+        clock_source: DefaultUtcClock::default(),
+    }
+    .time_optimality_solver(&problem, sender, stop);
+
+    let mut v =vec![];
+    for t in rx.iter() {
+        v.push(t);
+    }
+
+    let Some(last) = v.last() else {
+        panic!("Unable to get any solution");
+    };
+
+    let AlgorithmState::OptimalScheduleSolution(sched) = last else {
+        panic!("Optimal solution was not found");
+    };
+
+    assert_eq!(sched["Resource1"][0].id, (0usize, 0usize));
+    assert_eq!(sched["Resource1"].len(), 2usize);
+    assert_eq!(sched["Resource1"][1].id, (1usize, 0usize));
+    assert_eq!(sched.len(), 1usize);
+}
+
 
 #[cfg(test)]
 #[test]
