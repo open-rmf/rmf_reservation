@@ -1,16 +1,23 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque}, sync::{atomic::AtomicBool, mpsc::Sender, Arc}
+    collections::{HashMap, HashSet, VecDeque},
+    sync::{atomic::AtomicBool, mpsc::Sender, Arc},
 };
 
 use itertools::Itertools;
-use petgraph::{algo::{find_negative_cycle, toposort}, Graph};
+use petgraph::{
+    algo::{find_negative_cycle, toposort},
+    Graph,
+};
 use test::filter_tests;
 use varisat::{CnfFormula, ExtendFormula, Lit, Solver, Var};
 
 use chrono::{prelude::*, Duration, TimeDelta};
 
-use crate::{cost_function::static_cost::{self, StaticCost}, database::ClockSource};
 use crate::ReservationRequestAlternative;
+use crate::{
+    cost_function::static_cost::{self, StaticCost},
+    database::ClockSource,
+};
 
 use super::{AlgorithmState, SolverAlgorithm};
 
@@ -48,22 +55,23 @@ impl Problem {
 
     /// Request one or no alternative out of a few
     /// Returns the index of the request. This is useful for checking the assignment later on.
-    pub fn request_one_of_or_none(&mut self, alternatives: Vec<ReservationRequestAlternative>) -> usize {
+    pub fn request_one_of_or_none(
+        &mut self,
+        alternatives: Vec<ReservationRequestAlternative>,
+    ) -> usize {
         let mut alternatives = alternatives.clone();
-        // TODO(arjoc): 
-        alternatives.push(
-            ReservationRequestAlternative {
-                parameters: crate::ReservationParameters { 
-                    resource_name: "".to_string(), 
-                    duration: TimeDelta::new(0, 0), 
-                    start_time: crate::StartTimeRange { 
-                        earliest_start: None, 
-                        latest_start: None 
-                    }
+        // TODO(arjoc):
+        alternatives.push(ReservationRequestAlternative {
+            parameters: crate::ReservationParameters {
+                resource_name: "".to_string(),
+                duration: TimeDelta::new(0, 0),
+                start_time: crate::StartTimeRange {
+                    earliest_start: None,
+                    latest_start: None,
                 },
-                cost_function: Arc::new(StaticCost::new(0f64))
-            }
-        );
+            },
+            cost_function: Arc::new(StaticCost::new(0f64)),
+        });
         self.requests.push(alternatives);
         return self.requests.len() - 1;
     }
@@ -82,15 +90,22 @@ impl Problem {
 
     /// Require that these must a come immediately after b, if a and b are both awarded.
     /// For now we don't support cross-resource request.
-    pub fn must_come_immediately_after(&mut self,
-        a: &(usize, usize), b: &(usize, usize)) -> Result<(), String> {
+    pub fn must_come_immediately_after(
+        &mut self,
+        a: &(usize, usize),
+        b: &(usize, usize),
+    ) -> Result<(), String> {
         if a.0 >= self.requests.len()
             || a.1 >= self.requests[a.0].len()
             || b.0 >= self.requests.len()
             || b.1 >= self.requests[b.0].len()
-            || self.requests[b.0][b.1].parameters.resource_name != self.requests[a.0][a.1].parameters.resource_name
+            || self.requests[b.0][b.1].parameters.resource_name
+                != self.requests[a.0][a.1].parameters.resource_name
         {
-            return Err("Request and alternative was not found or between two different resources".to_string());
+            return Err(
+                "Request and alternative was not found or between two different resources"
+                    .to_string(),
+            );
         }
         self.must_be_immediately_after.push((*a, *b));
 
@@ -99,21 +114,27 @@ impl Problem {
 
     /// Require that a and b start at the same time.
     /// WARNING: We do not yet support transitivity.
-    pub fn must_start_at_same_time(&mut self,
-        a: &(usize, usize), b: &(usize, usize)) -> Result<(), String> {
+    pub fn must_start_at_same_time(
+        &mut self,
+        a: &(usize, usize),
+        b: &(usize, usize),
+    ) -> Result<(), String> {
         if a.0 >= self.requests.len()
             || a.1 >= self.requests[a.0].len()
             || b.0 >= self.requests.len()
             || b.1 >= self.requests[b.0].len()
-            || self.requests[b.0][b.1].parameters.resource_name == self.requests[a.0][a.1].parameters.resource_name
+            || self.requests[b.0][b.1].parameters.resource_name
+                == self.requests[a.0][a.1].parameters.resource_name
         {
-            return Err("Request and alternative was not found or between two different resources".to_string());
+            return Err(
+                "Request and alternative was not found or between two different resources"
+                    .to_string(),
+            );
         }
         self.same_start.insert(*a, *b);
         self.same_start.insert(*b, *a);
         Ok(())
     }
-
 }
 
 /// Snapshot of a solution. A solved schedule contains a list of assingments for each resource
@@ -185,10 +206,11 @@ fn shrink_reservation_request(
     })
 }
 
-
 /// Solves the same time constraint
-fn solve_same_time_constraints(final_schedule: &HashMap<String, Vec<Assignment>>, problem: &Problem) ->Result<HashMap<String, Vec<Assignment>>, ()> {
-    
+fn solve_same_time_constraints(
+    final_schedule: &HashMap<String, Vec<Assignment>>,
+    problem: &Problem,
+) -> Result<HashMap<String, Vec<Assignment>>, ()> {
     let mut final_schedule = final_schedule.clone();
     let mut indices = HashMap::new();
     let mut start_times_and_resources = HashMap::new();
@@ -199,8 +221,7 @@ fn solve_same_time_constraints(final_schedule: &HashMap<String, Vec<Assignment>>
         };
         if earliest_time == None {
             earliest_time = Some(assignment.start_time);
-        }
-        else {
+        } else {
             earliest_time = Some(earliest_time.unwrap().min(assignment.start_time));
         }
         indices.insert(resource.clone(), 0usize);
@@ -212,99 +233,96 @@ fn solve_same_time_constraints(final_schedule: &HashMap<String, Vec<Assignment>>
     let mut delay_graph = HashMap::new();
     let mut visited = HashSet::new();
     println!("{:?}", problem.same_start);
-    let mut last_delay = problem.same_start.iter()
-        .map(|(u1, u2)| 
-        {
-
+    let mut last_delay = problem
+        .same_start
+        .iter()
+        .map(|(u1, u2)| {
             let (res1, idx1) = start_times_and_resources[&u1].clone();
             let (res2, idx2) = start_times_and_resources[&u2].clone();
             let start1 = final_schedule[&res1][idx1].start_time.clone();
             let start2 = final_schedule[&res2][idx2].start_time.clone();
-            println!("{:?} {:?}",start1, start2);
+            println!("{:?} {:?}", start1, start2);
             if start1 < start2 {
-                (u2, start2, u1)
-            }
-            else {
-                (u1, start1, u2)
+                (u2, start2, u1, start1)
+            } else {
+                (u1, start1, u2, start2)
             }
         })
         .fold(None, |a, b| {
             if let Some((delay_cause, start_time, delay_affected)) = a {
-                if b.1 > start_time {
-                    Some(b)
-                }
-                else {
+                if b.3 < start_time {
+                    Some((b.0, b.1, b.2))
+                } else {
                     a
                 }
-            }
-            else {
-                Some(b)
+            } else {
+                Some((b.0, b.1, b.2))
             }
         });
-    println!("Last Delay {:?}", last_delay);
+
     while let Some((delay_cause, start_time, delay_affected)) = last_delay {
         visited.insert((delay_cause, delay_affected));
         visited.insert((delay_affected, delay_cause));
         // For backtracking
         delay_graph.insert(*delay_affected, *delay_cause);
         let (resource, affected_id) = start_times_and_resources[&delay_affected].clone();
-        
+
+
         // Attempt to delay the resource
         let Some(resource_sched) = final_schedule.get_mut(&resource) else {
             panic!();
         };
         resource_sched[affected_id].start_time = start_time;
-        for (i,j) in (affected_id..resource_sched.len()).tuple_windows() {
+        for (i, j) in (affected_id..resource_sched.len()).tuple_windows() {
             let delay_affected = resource_sched[i].id;
             let next_in_line = resource_sched[j].id;
-            let Some(p) = problem.requests[delay_affected.0][delay_affected.1].parameters.duration else {
+            let Some(p) = problem.requests[delay_affected.0][delay_affected.1]
+                .parameters
+                .duration
+            else {
                 panic!("Schedule had indeterminate duration at end");
             };
             if resource_sched[j].start_time > resource_sched[i].start_time + p {
                 break;
             }
-            
+
             resource_sched[j].start_time = resource_sched[i].start_time + p;
             delay_graph.insert(next_in_line, delay_affected);
         }
 
-        last_delay = problem.same_start.iter()
-        .filter(|edge| !visited.contains(edge))
-        .map(|(u1, u2)| 
-        {
-
-            let (res1, idx1) = start_times_and_resources[&u1].clone();
-            let (res2, idx2) = start_times_and_resources[&u2].clone();
-            let start1 = final_schedule[&res1][idx1].start_time.clone();
-            let start2 = final_schedule[&res2][idx2].start_time.clone();
-            println!("{:?} {:?}",start1, start2);
-            if start1 < start2 {
-                (u2, start2, u1)
-            }
-            else {
-                (u1, start1, u2)
-            }
-        })
-        .fold(None, |a, b| {
-            if let Some((delay_cause, start_time, delay_affected)) = a {
-                if b.1 > start_time {
-                    Some(b)
+        last_delay = problem
+            .same_start
+            .iter()
+            .filter(|edge| !visited.contains(edge))
+            .map(|(u1, u2)| {
+                let (res1, idx1) = start_times_and_resources[&u1].clone();
+                let (res2, idx2) = start_times_and_resources[&u2].clone();
+                let start1 = final_schedule[&res1][idx1].start_time.clone();
+                let start2 = final_schedule[&res2][idx2].start_time.clone();
+                println!("{:?} {:?}", start1, start2);
+                if start1 < start2 {
+                    (u2, start2, u1, start1)
+                } else {
+                    (u1, start1, u2, start2)
                 }
-                else {
-                    a
+            })
+            .fold(None, |a, b| {
+                if let Some((delay_cause, start_time, delay_affected)) = a {
+                    if b.3 < start_time {
+                        Some((b.0, b.1, b.2))
+                    } else {
+                        a
+                    }
+                } else {
+                    Some((b.0, b.1, b.2))
                 }
-            }
-            else {
-                Some(b)
-            }
-        });
+            });
     }
     Ok(final_schedule)
 }
 
 #[test]
-fn test_solve_time_constraints()
-{
+fn test_solve_time_constraints() {
     let current_time = chrono::Utc::now();
     let mut problem = Problem::default();
 
@@ -349,29 +367,35 @@ fn test_solve_time_constraints()
     problem.must_start_at_same_time(&(w0, 0), &(w2, 0));
 
     let mut final_schedule = HashMap::new();
-    final_schedule.insert("Resource2".to_string(), vec![
-        Assignment {
+    final_schedule.insert(
+        "Resource2".to_string(),
+        vec![Assignment {
             id: (w2, 0),
-            start_time: current_time + chrono::Duration::seconds(50)
-        }
-    ]);
-    final_schedule.insert("Resource1".to_string(), vec![
-        Assignment {
-            id: (w0, 0),
-            start_time: current_time 
-        },
-        Assignment {
-            id: (w1, 0),
-            start_time: current_time + chrono::Duration::seconds(60)
-        },
-    ]);
+            start_time: current_time + chrono::Duration::seconds(50),
+        }],
+    );
+    final_schedule.insert(
+        "Resource1".to_string(),
+        vec![
+            Assignment {
+                id: (w0, 0),
+                start_time: current_time,
+            },
+            Assignment {
+                id: (w1, 0),
+                start_time: current_time + chrono::Duration::seconds(60),
+            },
+        ],
+    );
 
-    let Ok(sched) = solve_same_time_constraints(&final_schedule, &problem) else
-    {
+    let Ok(sched) = solve_same_time_constraints(&final_schedule, &problem) else {
         panic!("Got error instead of solution");
     };
     println!("{:?}", sched);
-    assert_eq!(sched["Resource2"][0].start_time, sched["Resource1"][0].start_time);
+    assert_eq!(
+        sched["Resource2"][0].start_time,
+        sched["Resource1"][0].start_time
+    );
     assert!(sched["Resource1"][1].start_time > sched["Resource1"][0].start_time);
 }
 
@@ -578,7 +602,9 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
         // If a and b are awarded and in the same resource, then b must come immediately after a
         // and nothing else.
         for (ij, km) in problem.must_be_immediately_after.iter() {
-            if problem.requests[ij.0][ij.1].parameters.resource_name != problem.requests[km.0][km.1].parameters.resource_name {
+            if problem.requests[ij.0][ij.1].parameters.resource_name
+                != problem.requests[km.0][km.1].parameters.resource_name
+            {
                 continue;
             }
             let Some(x_ij) = var_list.get(&ij) else {
@@ -587,21 +613,19 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
             let Some(x_km) = var_list.get(&km) else {
                 panic!("Could not get variable");
             };
-            let Some(x_ij_) = comes_after_vars.get(ij) else
-            {
+            let Some(x_ij_) = comes_after_vars.get(ij) else {
                 continue;
             };
 
             let mut sum_vars = vec![];
-            for (nl,x_ijnl) in x_ij_ {
+            for (nl, x_ijnl) in x_ij_ {
                 if nl == km {
                     formula.add_clause(&[
                         Lit::from_var(*x_ij, false),
                         Lit::from_var(*x_km, false),
-                        Lit::from_var(*x_ijnl, true)
+                        Lit::from_var(*x_ijnl, true),
                     ]);
-                }
-                else {
+                } else {
                     sum_vars.push(Lit::from_var(*x_ijnl, true));
                 }
             }
@@ -932,11 +956,8 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                 }
             }
 
-            
-            
             // Solve time slots with cross-resource time constraints.
-           
-            
+
             println!("learned_clauses {:?}", learned_clauses.len());
             if learned_clauses.len() == 0 {
                 sender.send(AlgorithmState::FeasibleScheduleSolution(
