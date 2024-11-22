@@ -115,8 +115,7 @@ fn ototot() {
 
     let problem = Problem {
         requests,
-        one_of_dependencies: vec![],
-        dependencies: vec![],
+        ..Default::default()
     };
 
     let stop = Arc::new(AtomicBool::new(false));

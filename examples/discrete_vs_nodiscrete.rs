@@ -110,8 +110,7 @@ fn main() {
 
             let sat_flexible_time_problem = sat_flexible_time_model::Problem {
                 requests,
-                dependencies: vec![],
-                one_of_dependencies: vec![],
+                ..Default::default()
             };
 
             let stop = Arc::new(AtomicBool::new(false));

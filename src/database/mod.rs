@@ -376,8 +376,7 @@ impl<ClockType: ClockSource + Clone + std::marker::Send + std::marker::Sync + 's
 
         let problem = super::algorithms::sat_flexible_time_model::Problem {
             requests,
-            one_of_dependencies: vec![],
-            dependencies: vec![],
+            ..Default::default()
         };
 
         Snapshot {
