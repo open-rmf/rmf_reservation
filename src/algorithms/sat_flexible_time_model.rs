@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::{atomic::AtomicBool, mpsc::Sender, Arc},
+    sync::{atomic::AtomicBool, mpsc::Sender, Arc}, usize,
 };
 
 use itertools::Itertools;
@@ -8,7 +8,9 @@ use petgraph::{
     algo::{find_negative_cycle, toposort},
     Graph,
 };
+use rand::rngs::mock;
 use test::filter_tests;
+use uuid::Uuid;
 use varisat::{CnfFormula, ExtendFormula, Lit, Solver, Var};
 
 use chrono::{prelude::*, Duration, TimeDelta};
@@ -60,10 +62,12 @@ impl Problem {
         alternatives: Vec<ReservationRequestAlternative>,
     ) -> usize {
         let mut alternatives = alternatives.clone();
+        // HACK(arjoc): Just screate a new resource. 
+        let mock_res = Uuid::new_v4().to_string();
         // TODO(arjoc):
         alternatives.push(ReservationRequestAlternative {
             parameters: crate::ReservationParameters {
-                resource_name: "".to_string(),
+                resource_name: mock_res,
                 duration: TimeDelta::new(0, 0),
                 start_time: crate::StartTimeRange {
                     earliest_start: None,
@@ -206,11 +210,45 @@ fn shrink_reservation_request(
     })
 }
 
+fn ban_ordered_combo(
+    combos: &Vec<(usize, usize)>,
+    assignment_var_list: &HashMap<(usize, usize), Var>,
+    idx_to_order: &HashMap<usize, ((usize, usize), (usize, usize))>,
+    model: &Vec<Lit>
+) -> Vec<Lit>
+{
+    let mut new_learned_clause = vec![];
+    
+    /// Either remove one of the items causing the conflict
+    for c in combos {
+        let Some(var) = assignment_var_list.get(c) else {
+            continue;
+        };
+        new_learned_clause.push(Lit::from_var(*var, false));
+    }
+
+    let participating_assignment: HashSet<_> = combos.iter().cloned().collect();
+    /// Or ban their order
+    for lit in model {
+        let Some(s) = idx_to_order.get(&lit.index()) else {
+            continue;
+        };
+
+        if !participating_assignment.contains(&s.0) && !participating_assignment.contains(&s.1) {
+            continue;
+        }
+
+        new_learned_clause.push(Lit::from_var(lit.var(), lit.is_negative()));
+    }
+
+    new_learned_clause
+}
+
 /// Solves the same time constraint
 fn solve_same_time_constraints(
     final_schedule: &HashMap<String, Vec<Assignment>>,
     problem: &Problem,
-) -> Result<HashMap<String, Vec<Assignment>>, ()> {
+) -> Result<HashMap<String, Vec<Assignment>>, (HashMap<(usize, usize), (usize, usize)>, (usize, usize))> {
     let mut final_schedule = final_schedule.clone();
     let mut indices = HashMap::new();
     let mut start_times_and_resources = HashMap::new();
@@ -283,7 +321,7 @@ fn solve_same_time_constraints(
                 panic!("Schedule had indeterminate duration at end");
             };
             if resource_sched[j].start_time > resource_sched[i].start_time + p {
-                break;
+                return Err((delay_graph, (next_in_line)));
             }
 
             resource_sched[j].start_time = resource_sched[i].start_time + p;
