@@ -20,6 +20,7 @@ pub mod greedy_solver;
 pub mod kuhn_munkres;
 pub mod sat;
 pub mod sat_flexible_time_model;
+pub mod sat_teg;
 
 #[derive(Debug, Clone)]
 

@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::{atomic::AtomicBool, mpsc::Sender, Arc}, usize,
+    sync::{atomic::AtomicBool, mpsc::Sender, Arc},
+    usize,
 };
 
 use itertools::Itertools;
@@ -15,7 +16,7 @@ use varisat::{CnfFormula, ExtendFormula, Lit, Solver, Var};
 
 use chrono::{prelude::*, Duration, TimeDelta};
 
-use crate::ReservationRequestAlternative;
+use crate::{algorithms::greedy_solver::ConflictTracker, ReservationRequestAlternative};
 use crate::{
     cost_function::static_cost::{self, StaticCost},
     database::ClockSource,
@@ -42,9 +43,8 @@ pub struct Problem {
     /// of the form (a, b) where a is the request id and b is the alternative id.
     pub must_be_immediately_after: Vec<((usize, usize), (usize, usize))>,
 
-    /// Dependency of the form (a, b) where a is the request id and b is the alternative id.
-    /// (a,b)
-    pub same_start: HashMap<(usize, usize), (usize, usize)>,
+    /// Given two requests in the same resource require that there is a time gap between them.
+    pub min_delay: HashMap<((usize, usize), (usize, usize)), chrono::Duration>,
 }
 
 impl Problem {
@@ -62,7 +62,7 @@ impl Problem {
         alternatives: Vec<ReservationRequestAlternative>,
     ) -> usize {
         let mut alternatives = alternatives.clone();
-        // HACK(arjoc): Just screate a new resource. 
+        // HACK(arjoc): Just screate a new resource.
         let mock_res = Uuid::new_v4().to_string();
         // TODO(arjoc):
         alternatives.push(ReservationRequestAlternative {
@@ -115,30 +115,6 @@ impl Problem {
 
         Ok(())
     }
-
-    /// Require that a and b start at the same time.
-    /// WARNING: We do not yet support transitivity.
-    pub fn must_start_at_same_time(
-        &mut self,
-        a: &(usize, usize),
-        b: &(usize, usize),
-    ) -> Result<(), String> {
-        if a.0 >= self.requests.len()
-            || a.1 >= self.requests[a.0].len()
-            || b.0 >= self.requests.len()
-            || b.1 >= self.requests[b.0].len()
-            || self.requests[b.0][b.1].parameters.resource_name
-                == self.requests[a.0][a.1].parameters.resource_name
-        {
-            return Err(
-                "Request and alternative was not found or between two different resources"
-                    .to_string(),
-            );
-        }
-        self.same_start.insert(*a, *b);
-        self.same_start.insert(*b, *a);
-        Ok(())
-    }
 }
 
 /// Snapshot of a solution. A solved schedule contains a list of assingments for each resource
@@ -181,6 +157,8 @@ fn check_consistency(assignments: &Vec<Assignment>, problem: &Problem) -> bool {
     return true;
 }
 
+/// This function shrinks a given reservation request. If the reservation request cannot be shrunk, it
+/// returns None.
 fn shrink_reservation_request(
     reservation_req: &ReservationRequestAlternative,
     time_window: DateTime<Utc>,
@@ -210,16 +188,16 @@ fn shrink_reservation_request(
     })
 }
 
+/// Given a combination that causes a conflict generate a clause that bans it.
 fn ban_ordered_combo(
     combos: &Vec<(usize, usize)>,
     assignment_var_list: &HashMap<(usize, usize), Var>,
     idx_to_order: &HashMap<usize, ((usize, usize), (usize, usize))>,
-    model: &Vec<Lit>
-) -> Vec<Lit>
-{
+    model: &Vec<Lit>,
+) -> Vec<Lit> {
     let mut new_learned_clause = vec![];
-    
-    /// Either remove one of the items causing the conflict
+
+    // Either remove one of the items causing the conflict
     for c in combos {
         let Some(var) = assignment_var_list.get(c) else {
             continue;
@@ -228,7 +206,7 @@ fn ban_ordered_combo(
     }
 
     let participating_assignment: HashSet<_> = combos.iter().cloned().collect();
-    /// Or ban their order
+    // Or ban their order
     for lit in model {
         let Some(s) = idx_to_order.get(&lit.index()) else {
             continue;
@@ -244,197 +222,124 @@ fn ban_ordered_combo(
     new_learned_clause
 }
 
-/// Solves the same time constraint
-fn solve_same_time_constraints(
-    final_schedule: &HashMap<String, Vec<Assignment>>,
+/// Solves the minimum delay gap between reservations
+/// If there are conflicts this returns an Err variant with the clause that describes the
+/// ban.
+///
+/// TODO(arjoc) instead of per-resource allocation we may want to use toposort order for cross resource
+fn calculate_schedule_starts(
+    proposed_schedule: &HashMap<String, Vec<(usize, usize)>>,
     problem: &Problem,
-) -> Result<HashMap<String, Vec<Assignment>>, (HashMap<(usize, usize), (usize, usize)>, (usize, usize))> {
-    let mut final_schedule = final_schedule.clone();
-    let mut indices = HashMap::new();
-    let mut start_times_and_resources = HashMap::new();
-    let mut earliest_time = None;
-    for (resource, schedule) in &final_schedule {
-        let Some(assignment) = schedule.first() else {
-            continue;
-        };
-        if earliest_time == None {
-            earliest_time = Some(assignment.start_time);
-        } else {
-            earliest_time = Some(earliest_time.unwrap().min(assignment.start_time));
-        }
-        indices.insert(resource.clone(), 0usize);
+    assignment_var_list: &HashMap<(usize, usize), Var>,
+    idx_to_order: &HashMap<usize, ((usize, usize), (usize, usize))>,
+    model: &Vec<Lit>,
+    time_window: &Option<DateTime<Utc>>,
+    earliest: DateTime<Utc>,
+) -> Result<HashMap<String, Vec<Assignment>>, Vec<Vec<Lit>>> {
+    let mut errors = vec![];
+    let mut final_schedule = HashMap::new();
+    for (resource, schedule) in proposed_schedule {
+        let mut new_schedule = vec![];
+        let mut delay_chain = vec![];
+        for curr_assignment in schedule.iter() {
+            // If the schedule is empty, we place the first item on it as is.
+            let Some(prev_assignment) = new_schedule.last() else {
+                new_schedule.push(Assignment {
+                    id: curr_assignment.clone(),
+                    start_time: earliest,
+                });
+                continue;
+            };
 
-        for (index, assignment) in schedule.iter().enumerate() {
-            start_times_and_resources.insert(assignment.id, (resource.clone(), index));
-        }
-    }
-    let mut delay_graph = HashMap::new();
-    let mut visited = HashSet::new();
-    println!("{:?}", problem.same_start);
-    let mut last_delay = problem
-        .same_start
-        .iter()
-        .map(|(u1, u2)| {
-            let (res1, idx1) = start_times_and_resources[&u1].clone();
-            let (res2, idx2) = start_times_and_resources[&u2].clone();
-            let start1 = final_schedule[&res1][idx1].start_time.clone();
-            let start2 = final_schedule[&res2][idx2].start_time.clone();
-            println!("{:?} {:?}", start1, start2);
-            if start1 < start2 {
-                (u2, start2, u1, start1)
-            } else {
-                (u1, start1, u2, start2)
-            }
-        })
-        .fold(None, |a, b| {
-            if let Some((delay_cause, start_time, delay_affected)) = a {
-                if b.3 < start_time {
-                    Some((b.0, b.1, b.2))
-                } else {
-                    a
-                }
-            } else {
-                Some((b.0, b.1, b.2))
-            }
-        });
-
-    while let Some((delay_cause, start_time, delay_affected)) = last_delay {
-        visited.insert((delay_cause, delay_affected));
-        visited.insert((delay_affected, delay_cause));
-        // For backtracking
-        delay_graph.insert(*delay_affected, *delay_cause);
-        let (resource, affected_id) = start_times_and_resources[&delay_affected].clone();
-
-
-        // Attempt to delay the resource
-        let Some(resource_sched) = final_schedule.get_mut(&resource) else {
-            panic!();
-        };
-        resource_sched[affected_id].start_time = start_time;
-        for (i, j) in (affected_id..resource_sched.len()).tuple_windows() {
-            let delay_affected = resource_sched[i].id;
-            let next_in_line = resource_sched[j].id;
-            let Some(p) = problem.requests[delay_affected.0][delay_affected.1]
+            // Otherwise, we extract the duration of the schedule
+            let Some(min_duration) = problem.requests[prev_assignment.id.0][prev_assignment.id.1]
                 .parameters
                 .duration
             else {
-                panic!("Schedule had indeterminate duration at end");
+                panic!("Why is an infinite reservation in the middle of the schedule");
             };
-            if resource_sched[j].start_time > resource_sched[i].start_time + p {
-                return Err((delay_graph, (next_in_line)));
+
+            // Dumb thing. Get rig of utc chrono library
+            let zero_dur = TimeDelta::new(0, 0).unwrap();
+            // we use the end time of the previous
+            let end_time = prev_assignment.start_time + min_duration;
+            let min_gap = *problem
+                .min_delay
+                .get(&(prev_assignment.id, *curr_assignment))
+                .unwrap_or(&zero_dur);
+
+            if let Some(latest_start_time) = get_latest_allowed_time(
+                &problem.requests[curr_assignment.0][curr_assignment.1],
+                time_window,
+            ) {
+                // If the end time of the last resource exceeds the latest start time, then we need to backtrack
+                if end_time + min_gap > latest_start_time {
+                    delay_chain.push(*curr_assignment);
+                    errors.push(ban_ordered_combo(
+                        &delay_chain,
+                        assignment_var_list,
+                        idx_to_order,
+                        model,
+                    ));
+                    // We could return just this but we might as well collect more information for other resources
+                    break;
+                }
             }
 
-            resource_sched[j].start_time = resource_sched[i].start_time + p;
-            delay_graph.insert(next_in_line, delay_affected);
+            // If there is an earliest time constraint then we need to respect that.
+            if let Some(earliest_start_time) = problem.requests[curr_assignment.0]
+                [curr_assignment.1]
+                .parameters
+                .start_time
+                .earliest_start
+            {
+                if earliest_start_time < end_time + min_gap {
+                    // Earliest time is before end time and enforced gap
+                    new_schedule.push(Assignment {
+                        id: *curr_assignment,
+                        start_time: end_time + min_gap,
+                    });
+                    delay_chain.push(*curr_assignment);
+                } else {
+                    new_schedule.push(Assignment {
+                        id: curr_assignment.clone(),
+                        start_time: earliest_start_time,
+                    });
+                    delay_chain.clear();
+                }
+            } else {
+                // If no earliest time then just stack it at the back of the last reservation
+                new_schedule.push(Assignment {
+                    id: curr_assignment.clone(),
+                    start_time: end_time + min_gap,
+                });
+                delay_chain.push(*curr_assignment);
+            }
         }
-
-        last_delay = problem
-            .same_start
-            .iter()
-            .filter(|edge| !visited.contains(edge))
-            .map(|(u1, u2)| {
-                let (res1, idx1) = start_times_and_resources[&u1].clone();
-                let (res2, idx2) = start_times_and_resources[&u2].clone();
-                let start1 = final_schedule[&res1][idx1].start_time.clone();
-                let start2 = final_schedule[&res2][idx2].start_time.clone();
-                println!("{:?} {:?}", start1, start2);
-                if start1 < start2 {
-                    (u2, start2, u1, start1)
-                } else {
-                    (u1, start1, u2, start2)
-                }
-            })
-            .fold(None, |a, b| {
-                if let Some((delay_cause, start_time, delay_affected)) = a {
-                    if b.3 < start_time {
-                        Some((b.0, b.1, b.2))
-                    } else {
-                        a
-                    }
-                } else {
-                    Some((b.0, b.1, b.2))
-                }
-            });
+        final_schedule.insert(resource.clone(), new_schedule);
     }
-    Ok(final_schedule)
+    if errors.len() == 0 {
+        Ok(final_schedule)
+    } else {
+        Err(errors)
+    }
 }
 
-#[test]
-fn test_solve_time_constraints() {
-    let current_time = chrono::Utc::now();
-    let mut problem = Problem::default();
-
-    let req1 = vec![ReservationRequestAlternative {
-        parameters: crate::ReservationParameters {
-            resource_name: "Resource1".to_string(),
-            duration: Some(chrono::Duration::seconds(60)),
-            start_time: crate::StartTimeRange {
-                earliest_start: Some(current_time + chrono::Duration::seconds(50)),
-                latest_start: Some(current_time + chrono::Duration::seconds(120)),
-            },
-        },
-        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
-    }];
-    let w0 = problem.request_one_of(req1);
-    let req2 = vec![ReservationRequestAlternative {
-        parameters: crate::ReservationParameters {
-            resource_name: "Resource1".to_string(),
-            duration: Some(chrono::Duration::seconds(60)),
-            start_time: crate::StartTimeRange {
-                earliest_start: Some(current_time + chrono::Duration::seconds(50)),
-                latest_start: Some(current_time + chrono::Duration::seconds(120)),
-            },
-        },
-        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
-    }];
-    let w1 = problem.request_one_of(req2);
-
-    let req3 = vec![ReservationRequestAlternative {
-        parameters: crate::ReservationParameters {
-            resource_name: "Resource2".to_string(),
-            duration: Some(chrono::Duration::seconds(60)),
-            start_time: crate::StartTimeRange {
-                earliest_start: Some(current_time + chrono::Duration::seconds(50)),
-                latest_start: Some(current_time + chrono::Duration::seconds(120)),
-            },
-        },
-        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
-    }];
-    let w2 = problem.request_one_of(req3);
-
-    problem.must_start_at_same_time(&(w0, 0), &(w2, 0));
-
-    let mut final_schedule = HashMap::new();
-    final_schedule.insert(
-        "Resource2".to_string(),
-        vec![Assignment {
-            id: (w2, 0),
-            start_time: current_time + chrono::Duration::seconds(50),
-        }],
-    );
-    final_schedule.insert(
-        "Resource1".to_string(),
-        vec![
-            Assignment {
-                id: (w0, 0),
-                start_time: current_time,
-            },
-            Assignment {
-                id: (w1, 0),
-                start_time: current_time + chrono::Duration::seconds(60),
-            },
-        ],
-    );
-
-    let Ok(sched) = solve_same_time_constraints(&final_schedule, &problem) else {
-        panic!("Got error instead of solution");
+fn get_latest_allowed_time(
+    reservation_req: &ReservationRequestAlternative,
+    time_window: &Option<DateTime<Utc>>,
+) -> Option<DateTime<Utc>> {
+    let Some(latest_res_req) = reservation_req.parameters.start_time.latest_start else {
+        return *time_window;
     };
-    println!("{:?}", sched);
-    assert_eq!(
-        sched["Resource2"][0].start_time,
-        sched["Resource1"][0].start_time
-    );
-    assert!(sched["Resource1"][1].start_time > sched["Resource1"][0].start_time);
+    let Some(time_window) = time_window else {
+        return Some(latest_res_req);
+    };
+    if *time_window < latest_res_req {
+        Some(*time_window)
+    } else {
+        Some(latest_res_req)
+    }
 }
 
 /// Solver for scenarios where there is a starting time range instead of a fixed starting time.
@@ -493,7 +398,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
 
         let mut var_by_resource = HashMap::new();
 
-        let mut final_schedule = HashMap::new();
+        let earliest_start = self.clock_source.now();
 
         for req_id in 0..problem.requests.len() {
             let mut options = vec![];
@@ -719,9 +624,6 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                 return;
             }
 
-            prev_schedule = final_schedule;
-            final_schedule = HashMap::new();
-
             // Shrink the time window. Recalculate
             if let Some(time_window) = time_window {
                 println!("Attempting shrink");
@@ -814,7 +716,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
 
             let mut edges = vec![];
             let mut vertices = vec![];
-            for lit in model {
+            for lit in &model {
                 if !lit.is_positive() {
                     continue;
                 }
@@ -869,145 +771,16 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
             }
 
             //println!("Schedule: {:?}", schedules);
-
-            let mut learned_clauses = vec![];
-            let mut ok = true;
-
-            // Solve time slots without cross-resource time constraints. Can be parallelized.
-            for (res_name, sched) in schedules {
-                let mut last_reservation_end = current_time;
-                let mut last_gap = 0usize;
-                final_schedule.insert(res_name.clone(), vec![]);
-                let Some(resource_schedule) = final_schedule.get_mut(&res_name) else {
-                    panic!("Should never reach here")
-                };
-                for i in 0..sched.len() {
-                    let alternative = &problem.requests[sched[i].0][sched[i].1];
-
-                    let Some(duration) = alternative.parameters.duration else {
-                        if i + 1 < sched.len() {
-                            if let Some(latest) = alternative.parameters.start_time.latest_start {
-                                if last_reservation_end > latest {
-                                    // Add a banning of this specific ordering [Exponential bomb if ordering is too long]
-                                    for (j, k) in (last_gap..i).tuple_windows() {
-                                        let j_id = sched[j];
-                                        let Some(vars) = comes_after_vars.get(&j_id) else {
-                                            continue;
-                                        };
-
-                                        let mut transitive_pairs = vec![];
-
-                                        for (id, j_var) in vars.iter() {
-                                            if *id == sched[j] || *id == sched[k] {
-                                                continue;
-                                            }
-                                            if problem.requests[id.0][id.1].parameters.resource_name
-                                                != problem.requests[j_id.0][j_id.1]
-                                                    .parameters
-                                                    .resource_name
-                                            {
-                                                continue;
-                                            }
-                                            let Some(other) = comes_after_vars.get(&id) else {
-                                                panic!("Could not get");
-                                            };
-                                            let Some(k_var) = other.get(&sched[k]) else {
-                                                continue;
-                                            };
-                                            transitive_pairs.push((j_var, k_var));
-                                        }
-
-                                        if transitive_pairs.len() > 12 {
-                                            panic!("Problem is too congested to solve");
-                                        }
-
-                                        let Some(not_allowed_next) = vars.get(&sched[k]) else {
-                                            continue;
-                                        };
-
-                                        for x in 0..2_i32.pow(transitive_pairs.len() as u32) {
-                                            let mut clause = vec![];
-                                            for y in 0..transitive_pairs.len() {
-                                                if (1 << y) & x != 0 {
-                                                    clause.push(transitive_pairs[y].0);
-                                                } else {
-                                                    clause.push(transitive_pairs[y].1);
-                                                }
-                                            }
-
-                                            let mut formula =
-                                                vec![Lit::from_var(*not_allowed_next, false)];
-                                            for i in clause {
-                                                formula.push(Lit::from_var(*i, true));
-                                            }
-                                            learned_clauses.push(formula);
-                                        }
-                                    }
-                                } else {
-                                    if last_reservation_end != latest {
-                                        last_gap = i;
-                                    }
-                                }
-                            }
-                            continue;
-                        } else {
-                            panic!("Somehow ended up with an infinite reservation with no end in the middle of the schedule")
-                        }
-                    };
-
-                    if let Some(earliest) = alternative.parameters.start_time.earliest_start {
-                        if earliest >= last_reservation_end {
-                            resource_schedule.push(Assignment {
-                                id: sched[i].clone(),
-                                start_time: earliest,
-                            });
-                            last_reservation_end = earliest + duration;
-                            last_gap = i;
-                        } else {
-                            if let Some(latest) = alternative.parameters.start_time.latest_start {
-                                if last_reservation_end >= latest {
-                                    // TODO(back track)
-                                    let mut formula = vec![];
-                                    for j in last_gap..i {
-                                        let v = var_list.get(&sched[j]).expect("File should be ");
-                                        formula.push(Lit::from_var(*v, false));
-                                    }
-                                    learned_clauses.push(formula);
-                                    println!("Timed out {}, {}", latest, last_reservation_end);
-                                    ok = false;
-                                } else {
-                                    resource_schedule.push(Assignment {
-                                        id: sched[i].clone(),
-                                        start_time: last_reservation_end,
-                                    });
-                                    last_reservation_end += duration;
-                                }
-                            } else {
-                                resource_schedule.push(Assignment {
-                                    id: sched[i].clone(),
-                                    start_time: last_reservation_end,
-                                });
-                                last_reservation_end += duration;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Solve time slots with cross-resource time constraints.
-
-            println!("learned_clauses {:?}", learned_clauses.len());
-            if learned_clauses.len() == 0 {
-                sender.send(AlgorithmState::FeasibleScheduleSolution(
-                    final_schedule.clone(),
-                ));
-            }
-
-            for clause in learned_clauses {
-                solver.add_clause(&clause);
-            }
-
-            if ok {
+            let res = calculate_schedule_starts(
+                &schedules,
+                problem,
+                &var_list,
+                &idx_to_order,
+                &model,
+                &time_window,
+                earliest_start,
+            );
+            if let Ok(final_schedule) = res {
                 println!("{:?}", final_schedule);
                 time_window = final_schedule
                     .iter()
@@ -1026,14 +799,24 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                     .map(|p| Lit::from_var(var_list[&p.id], false))
                     .collect();
                 solver.add_clause(&banned_assignment);
-            } else {
-                println!("Could not solve");
-                ok = false;
+                sender.send(AlgorithmState::FeasibleScheduleSolution(
+                    final_schedule.clone(),
+                ));
+                prev_schedule = final_schedule.clone();
+            } else if let Err(learned_clauses) = res {
+                println!("learned_clauses {:?}", learned_clauses.len());
+                for clause in learned_clauses {
+                    solver.add_clause(&clause);
+                }
             }
         }
-        sender.send(AlgorithmState::OptimalScheduleSolution(
-            prev_schedule.clone(),
-        ));
+        if prev_schedule.len() > 0 {
+            sender.send(AlgorithmState::OptimalScheduleSolution(
+                prev_schedule.clone(),
+            ));
+        } else {
+            sender.send(AlgorithmState::UnSolveable);
+        }
     }
 
     /// Checks if a set of requests is feasible. Given a problem we see if there is a way to schedule the solution while ignoring the
