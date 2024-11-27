@@ -115,6 +115,30 @@ impl Problem {
 
         Ok(())
     }
+
+    /// Require that there is a minimum gap between two reservations based on previous 
+    /// reservation conditions
+    pub fn require_minimum_gap(
+        &mut self,
+        a: &(usize, usize),
+        b: &(usize, usize),
+        duration: chrono::Duration
+    ) -> Result<(), String> {
+        if a.0 >= self.requests.len()
+            || a.1 >= self.requests[a.0].len()
+            || b.0 >= self.requests.len()
+            || b.1 >= self.requests[b.0].len()
+            || self.requests[b.0][b.1].parameters.resource_name
+                != self.requests[a.0][a.1].parameters.resource_name
+        {
+            return Err(
+                "Request and alternative was not found or between two different resources"
+                    .to_string(),
+            );
+        }
+        self.min_delay.insert((*a, *b), duration);
+        Ok(())
+    }
 }
 
 /// Snapshot of a solution. A solved schedule contains a list of assingments for each resource
@@ -371,7 +395,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SolverAlgo
 
         result_channel.send(AlgorithmState::FeasibleScheduleSolution(feasible_solution));
 
-        self.time_optimality_solver(&problem, result_channel, stop);
+        self.time_optimality_linear_search_solver(&problem, result_channel, stop);
     }
 }
 
@@ -383,7 +407,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
     /// for scenarios where the solver is taking too long and you need a feasible solution soon. You can listen on this
     /// channel without calling `feasbility_analysis`.
     /// - `stop` - A boolean by which you can tell the solver to stop solving.
-    pub fn time_optimality_solver(
+    pub fn time_optimality_linear_search_solver(
         &self,
         problem: &Problem,
         sender: Sender<AlgorithmState>,
@@ -611,6 +635,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
         let mut solver = Solver::new();
         solver.add_formula(&formula);
 
+
         let mut solved = false;
 
         let current_time = self.clock_source.now();
@@ -642,10 +667,6 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                                 &problem.requests[alt_km.0][alt_km.1],
                                 time_window,
                             );
-
-                            println!("Shrinking to");
-                            println!("{:?}", alt_ij_shrink);
-                            println!("{:?}", alt_km_shrink);
 
                             if alt_ij_shrink.is_none() {
                                 // Ban the entire alternative
@@ -739,13 +760,22 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
             let mut pgraph = Graph::<(usize, usize), bool>::new();
             let mut node_map = HashMap::new();
 
+            // Panicking happening here
             for v in vertices {
+                println!("{:?}", v);
                 node_map.insert(v, pgraph.add_node(v));
             }
             for (after, before) in edges {
+                println!("{:?} {:?}", after,before);
+                let Some(a) = node_map.get(&after) else {
+                    continue;
+                };
+                let Some(b) = node_map.get(&before) else {
+                    continue;
+                };
                 pgraph.add_edge(
-                    *node_map.get(&after).unwrap(),
-                    *node_map.get(&before).unwrap(),
+                    *a,
+                    *b,
                     true,
                 );
             }
@@ -790,6 +820,459 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                         assignment.start_time
                     })
                     .max();
+                println!("Setting new time window to be less than {:?}", time_window);
+                // We also don't want the same solution
+                let banned_assignment: Vec<_> = final_schedule
+                    .iter()
+                    .map(|(_, assignment)| assignment.iter())
+                    .flatten()
+                    .map(|p| Lit::from_var(var_list[&p.id], false))
+                    .collect();
+                solver.add_clause(&banned_assignment);
+                sender.send(AlgorithmState::FeasibleScheduleSolution(
+                    final_schedule.clone(),
+                ));
+                prev_schedule = final_schedule.clone();
+            } else if let Err(learned_clauses) = res {
+                println!("learned_clauses {:?}", learned_clauses.len());
+                for clause in learned_clauses {
+                    solver.add_clause(&clause);
+                }
+            }
+        }
+        if prev_schedule.len() > 0 {
+            sender.send(AlgorithmState::OptimalScheduleSolution(
+                prev_schedule.clone(),
+            ));
+        } else {
+            sender.send(AlgorithmState::UnSolveable);
+        }
+    }
+
+     /// This class of solvers tries to pack all the alternatives into the shortest possible time window
+    /// It ignores the cost function. This is useful if you want to pack more items
+    /// - `problem` - A reservation problem you want to solve.
+    /// - `sender` - A channel by which the solver communicates its latest "best" solution. This is useful
+    /// for scenarios where the solver is taking too long and you need a feasible solution soon. You can listen on this
+    /// channel without calling `feasbility_analysis`.
+    /// - `stop` - A boolean by which you can tell the solver to stop solving.
+    pub fn time_suboptimal_search_solver(
+        &self,
+        problem: &Problem,
+        sender: Sender<AlgorithmState>,
+        stop: std::sync::Arc<AtomicBool>,
+        suboptimality_ratio: i32
+    ) {
+        let mut resources = HashMap::new();
+        let mut id_to_resource = vec![];
+        let mut var_list = HashMap::new();
+        let mut idx_to_option = vec![];
+
+        let mut formula = varisat::CnfFormula::new();
+
+        let mut var_by_resource = HashMap::new();
+
+        let earliest_start = self.clock_source.now();
+
+        for req_id in 0..problem.requests.len() {
+            let mut options = vec![];
+            let request_alternatives = &problem.requests[req_id];
+            for alt_id in 0..request_alternatives.len() {
+                let request = &request_alternatives[alt_id];
+                if !resources.contains_key(&request.parameters.resource_name) {
+                    resources.insert(
+                        request.parameters.resource_name.clone(),
+                        id_to_resource.len(),
+                    );
+                    var_by_resource.insert(id_to_resource.len(), vec![]);
+                    id_to_resource.push(request.parameters.resource_name.clone());
+                }
+                let v = Var::from_index(idx_to_option.len());
+                idx_to_option.push((req_id, alt_id));
+                var_list.insert((req_id, alt_id), v);
+
+                //NOTE: if this line panics something is  v weird. TODO(arjoc) reformat so impossible topanic.
+                let mut option_list = var_by_resource
+                    .get_mut(resources.get(&request.parameters.resource_name).unwrap());
+                let Some(varlist) = option_list else {
+                    panic!("We shouldnt reach here");
+                };
+                varlist.push((req_id, alt_id));
+                options.push(v);
+            }
+
+            // These clauses state that there can be only one alternative chosen from the reservations
+            let v: Vec<_> = options.iter().map(|v| Lit::from_var(*v, true)).collect();
+            formula.add_clause(v.as_slice());
+
+            for var_pair in options.iter().combinations(2) {
+                if var_pair.len() != 2 {
+                    panic!("Invalid combination found");
+                }
+
+                formula.add_clause(&[
+                    Lit::from_var(*var_pair[0], false),
+                    Lit::from_var(*var_pair[1], false),
+                ]);
+            }
+        }
+
+        let mut idx = idx_to_option.len();
+        let mut comes_after_vars = HashMap::new();
+
+        let mut idx_to_order = HashMap::new();
+        // Strict total order variables
+        for (_, alternatives) in var_by_resource.iter() {
+            for i in 0..alternatives.len() {
+                for j in 0..alternatives.len() {
+                    if i == j {
+                        continue;
+                    }
+
+                    let v = Var::from_index(idx);
+                    idx_to_order.insert(idx, (alternatives[i], alternatives[j]));
+                    idx += 1;
+
+                    if !comes_after_vars.contains_key(&alternatives[i]) {
+                        comes_after_vars.insert(alternatives[i], HashMap::new());
+                    }
+                    let Some(m) = comes_after_vars.get_mut(&alternatives[i]) else {
+                        panic!("Should never reach here");
+                    };
+                    m.insert(alternatives[j], v);
+                }
+            }
+        }
+
+        /// Dependency requirements
+        for dep in problem.dependencies.iter() {
+            let (x1, x2) = dep;
+            let Some(x_ij) = var_list.get(x1) else {
+                panic!("Could not find variable");
+            };
+            let Some(x_km) = var_list.get(x2) else {
+                panic!("Could not get variable");
+            };
+            formula.add_clause(&[x_ij.negative(), Lit::from_var(*x_km, true)]);
+        }
+
+        // Strict Total Order constraints
+        for (_, alternatives) in var_by_resource.iter() {
+            for i in 0..alternatives.len() {
+                for j in i + 1..alternatives.len() {
+                    let ij = alternatives[i];
+                    let km = alternatives[j];
+                    let X_ijkm = comes_after_vars
+                        .get(&ij)
+                        .unwrap()
+                        .get(&km)
+                        .expect("something went wrong");
+                    let X_kmij = comes_after_vars
+                        .get(&km)
+                        .unwrap()
+                        .get(&ij)
+                        .expect("something went wrong");
+                    let x_ij = var_list.get(&ij).expect("Something went wrong");
+                    let x_km = var_list.get(&km).expect("Something went wrong");
+
+                    // Assymmetry
+                    formula.add_clause(&[
+                        Lit::from_var(*x_ij, false),
+                        Lit::from_var(*x_km, false),
+                        Lit::from_var(*X_ijkm, false),
+                        Lit::from_var(*X_kmij, false),
+                    ]);
+
+                    // Connectedness
+                    formula.add_clause(&[
+                        Lit::from_var(*x_ij, false),
+                        Lit::from_var(*x_km, false),
+                        Lit::from_var(*X_ijkm, true),
+                        Lit::from_var(*X_kmij, true),
+                    ])
+                }
+            }
+
+            // Transitivity (Warning O(n^3))
+            for (_ij, x_ij_) in comes_after_vars.iter() {
+                for (km, X_ijkm) in x_ij_.iter() {
+                    let Some(other) = comes_after_vars.get(km) else {
+                        continue;
+                    };
+                    for (nl, X_kmnl) in other.iter() {
+                        let Some(X_ijnl) = x_ij_.get(nl) else {
+                            //panic!("Failed to get {:?}", nl);
+                            continue;
+                        };
+
+                        formula.add_clause(&[
+                            Lit::from_var(*X_ijkm, false),
+                            Lit::from_var(*X_kmnl, false),
+                            Lit::from_var(*X_ijnl, true),
+                        ]);
+                    }
+                }
+            }
+        }
+
+        // Constraints for coming immediately after.
+        // If a and b are awarded and in the same resource, then b must come immediately after a
+        // and nothing else.
+        for (ij, km) in problem.must_be_immediately_after.iter() {
+            if problem.requests[ij.0][ij.1].parameters.resource_name
+                != problem.requests[km.0][km.1].parameters.resource_name
+            {
+                continue;
+            }
+            let Some(x_ij) = var_list.get(&ij) else {
+                panic!("Could not find variable");
+            };
+            let Some(x_km) = var_list.get(&km) else {
+                panic!("Could not get variable");
+            };
+            let Some(x_ij_) = comes_after_vars.get(ij) else {
+                continue;
+            };
+
+            let mut sum_vars = vec![];
+            for (nl, x_ijnl) in x_ij_ {
+                if nl == km {
+                    formula.add_clause(&[
+                        Lit::from_var(*x_ij, false),
+                        Lit::from_var(*x_km, false),
+                        Lit::from_var(*x_ijnl, true),
+                    ]);
+                } else {
+                    sum_vars.push(Lit::from_var(*x_ijnl, true));
+                }
+            }
+            formula.add_clause(&sum_vars);
+        }
+
+        // Prededuced constraints based on scheduling constraints
+        for (_, alternatives) in var_by_resource.iter() {
+            for i in 0..alternatives.len() {
+                for j in i + 1..alternatives.len() {
+                    let alt_ij = alternatives[i];
+                    let alt_km = alternatives[j];
+
+                    let alt_ij_original = &problem.requests[alt_ij.0][alt_ij.1];
+                    let alt_km_original = &problem.requests[alt_km.0][alt_km.1];
+
+                    let Some(list_ij) = comes_after_vars.get(&alt_ij) else {
+                        panic!("For some reason");
+                    };
+
+                    let X_ijkm = list_ij.get(&alt_km).expect("");
+                    let Some(list_km) = comes_after_vars.get(&alt_km) else {
+                        panic!("For some reason");
+                    };
+
+                    let X_kmij = list_km.get(&alt_ij).expect("");
+                    if !alt_ij_original.can_be_scheduled_after(&alt_km_original.parameters) {
+                        // ij cannot be after km
+                        formula.add_clause(&[Lit::from_var(*X_ijkm, false)]);
+                    }
+
+                    if !alt_km_original.can_be_scheduled_after(&alt_ij_original.parameters) {
+                        // ij cannot be after km
+                        formula.add_clause(&[Lit::from_var(*X_kmij, false)]);
+                    }
+                }
+            }
+        }
+
+        let mut solver = Solver::new();
+        solver.add_formula(&formula);
+
+
+        let mut solved = false;
+
+        let current_time = self.clock_source.now();
+
+        let mut time_window = None;
+        let mut prev_schedule = HashMap::new();
+
+        while !solved {
+            if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                sender.send(AlgorithmState::NotFound);
+                return;
+            }
+
+            // Shrink the time window. Recalculate
+            if let Some(time_window) = time_window {
+                println!("Attempting shrink");
+                let mut formula = varisat::CnfFormula::new();
+                for (_, alternatives) in var_by_resource.iter() {
+                    for i in 0..alternatives.len() {
+                        for j in i + 1..alternatives.len() {
+                            let alt_ij = alternatives[i];
+                            let alt_km = alternatives[j];
+
+                            let alt_ij_shrink = shrink_reservation_request(
+                                &problem.requests[alt_ij.0][alt_ij.1],
+                                time_window,
+                            );
+                            let alt_km_shrink = shrink_reservation_request(
+                                &problem.requests[alt_km.0][alt_km.1],
+                                time_window,
+                            );
+
+                            if alt_ij_shrink.is_none() {
+                                // Ban the entire alternative
+
+                                let x_ij = var_list.get(&alt_ij).expect("Something went wrong");
+                                formula.add_clause(&[Lit::from_var(*x_ij, false)]);
+                            }
+
+                            if alt_km_shrink.is_none() {
+                                // Ban the entire alternative
+                                let x_km = var_list.get(&alt_km).expect("Something went wrong");
+                                formula.add_clause(&[Lit::from_var(*x_km, false)]);
+                            }
+
+                            if let Some(alt_ij_shrink) = alt_ij_shrink {
+                                if let Some(alt_km_shrink) = alt_km_shrink {
+                                    let Some(list_ij) = comes_after_vars.get(&alt_ij) else {
+                                        panic!("For some reason unable to get comes after vars");
+                                    };
+
+                                    let X_ijkm = list_ij.get(&alt_km).expect("");
+                                    let Some(list_km) = comes_after_vars.get(&alt_km) else {
+                                        panic!(
+                                            "For some reason unable to get comes after vars
+                                        "
+                                        );
+                                    };
+
+                                    let X_kmij = list_km.get(&alt_ij).expect("");
+                                    if !alt_ij_shrink
+                                        .can_be_scheduled_after(&alt_km_shrink.parameters)
+                                    {
+                                        // ij cannot be after km
+                                        formula.add_clause(&[Lit::from_var(*X_ijkm, false)]);
+                                    }
+
+                                    if !alt_km_shrink
+                                        .can_be_scheduled_after(&alt_ij_shrink.parameters)
+                                    {
+                                        // ij cannot be after km
+                                        formula.add_clause(&[Lit::from_var(*X_kmij, false)]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                solver.add_formula(&formula);
+            }
+
+            println!("Solving");
+
+            let Ok(k) = solver.solve() else {
+                println!("Failed to solve");
+                break;
+            };
+
+            if !k {
+                println!("No soln");
+                break;
+            }
+
+            let Some(model) = solver.model() else {
+                break;
+            };
+
+            println!("Reconstructing proposed schedule");
+
+            let mut edges = vec![];
+            let mut vertices = vec![];
+            for lit in &model {
+                if !lit.is_positive() {
+                    continue;
+                }
+                let v = lit.var();
+                let v_idx = v.index();
+
+                if let Some((from, to)) = idx_to_order.get(&v_idx) {
+                    edges.push(((*from), (*to)));
+                } else {
+                    if v_idx >= idx_to_option.len() {
+                        continue;
+                    }
+
+                    let vert = idx_to_option[v_idx];
+                    vertices.push(vert)
+                }
+            }
+
+            // Build dependency graph
+            let mut pgraph = Graph::<(usize, usize), bool>::new();
+            let mut node_map = HashMap::new();
+
+            // Panicking happening here
+            for v in vertices {
+                println!("{:?}", v);
+                node_map.insert(v, pgraph.add_node(v));
+            }
+            for (after, before) in edges {
+                println!("{:?} {:?}", after,before);
+                let Some(a) = node_map.get(&after) else {
+                    continue;
+                };
+                let Some(b) = node_map.get(&before) else {
+                    continue;
+                };
+                pgraph.add_edge(
+                    *a,
+                    *b,
+                    true,
+                );
+            }
+            let Ok(res) = toposort(&pgraph, None) else {
+                panic!("Something wrong with SAT formula found cycle.");
+            };
+            let order: Vec<_> = res
+                .iter()
+                .map(|v| pgraph.raw_nodes()[v.index()].weight)
+                .collect();
+            let mut schedules: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+
+            for res_pair in order {
+                let resource = &problem.requests[res_pair.0][res_pair.1]
+                    .parameters
+                    .resource_name;
+
+                if let Some(sched) = schedules.get_mut(resource) {
+                    sched.push(res_pair);
+                } else {
+                    schedules.insert(resource.clone(), vec![res_pair]);
+                }
+            }
+
+            //println!("Schedule: {:?}", schedules);
+            let res = calculate_schedule_starts(
+                &schedules,
+                problem,
+                &var_list,
+                &idx_to_order,
+                &model,
+                &time_window,
+                earliest_start,
+            );
+            if let Ok(final_schedule) = res {
+                println!("{:?}", final_schedule);
+                let max_time = final_schedule
+                    .iter()
+                    .filter(|(_resource, assignment)| assignment.len() != 0)
+                    .map(|(_resource, assignment)| {
+                        let assignment = &assignment[assignment.len() - 1];
+                        assignment.start_time
+                    })
+                    .max();
+
+                let m = (max_time.unwrap() - earliest_start) / suboptimality_ratio;
+                time_window = Some(earliest_start + m);
                 println!("Setting new time window to be less than {:?}", time_window);
                 // We also don't want the same solution
                 let banned_assignment: Vec<_> = final_schedule
@@ -1230,7 +1713,7 @@ fn test_multi_item_sat_solver() {
     SATFlexibleTimeModel {
         clock_source: DefaultUtcClock::default(),
     }
-    .time_optimality_solver(&problem, sender, stop);
+    .time_optimality_linear_search_solver(&problem, sender, stop);
     for t in rx.iter() {
         println!("{:?}", t)
     }
@@ -1293,7 +1776,7 @@ fn test_multi_alternative_sat_solver() {
     SATFlexibleTimeModel {
         clock_source: DefaultUtcClock::default(),
     }
-    .time_optimality_solver(&problem, sender, stop);
+    .time_optimality_linear_search_solver(&problem, sender, stop);
     let mut v = vec![];
     for t in rx.iter() {
         v.push(t);
@@ -1374,7 +1857,7 @@ fn test_multi_alternative_sat_solver_with_dep() {
     SATFlexibleTimeModel {
         clock_source: DefaultUtcClock::default(),
     }
-    .time_optimality_solver(&problem, sender, stop);
+    .time_optimality_linear_search_solver(&problem, sender, stop);
 
     let mut v = vec![];
     for t in rx.iter() {

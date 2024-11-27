@@ -3,3 +3,4 @@
 Cargo.lock
 .helix/config.toml
 tarpaulin-report.html
+perf.txt
