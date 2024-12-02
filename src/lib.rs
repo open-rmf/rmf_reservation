@@ -134,28 +134,20 @@ impl fmt::Debug for ReservationRequestAlternative {
 }
 
 impl ReservationRequestAlternative {
-
     fn falls_within_acceptable_time(&self, time_point: &DateTime<Utc>) -> bool {
-        if let Some(earliest) = self.parameters.start_time.earliest_start
-        {
-            if let Some(latest) = self.parameters.start_time.latest_start
-            {
-                if let Some(duration) = self.parameters.duration
-                {
-                    let end = latest +duration;
+        if let Some(earliest) = self.parameters.start_time.earliest_start {
+            if let Some(latest) = self.parameters.start_time.latest_start {
+                if let Some(duration) = self.parameters.duration {
+                    let end = latest + duration;
                     return *time_point <= end && *time_point > earliest;
-                }
-                else {
+                } else {
                     return *time_point > earliest;
                 }
             }
-        }
-        else {
-            if let Some(latest) = self.parameters.start_time.latest_start
-            {
-                if let Some(duration) = self.parameters.duration
-                {
-                    let end = latest +duration;
+        } else {
+            if let Some(latest) = self.parameters.start_time.latest_start {
+                if let Some(duration) = self.parameters.duration {
+                    let end = latest + duration;
                     return *time_point <= end;
                 }
             }

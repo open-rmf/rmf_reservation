@@ -1,12 +1,19 @@
-use std::{collections::HashMap, io::Write, sync::{atomic::AtomicBool, Arc}, time::SystemTime};
+use std::{
+    collections::HashMap,
+    io::Write,
+    sync::{atomic::AtomicBool, Arc},
+    time::SystemTime,
+};
 
 use chrono::{TimeZone, Utc};
 use rmf_reservations::{
-    algorithms::sat_flexible_time_model::{Problem, SATFlexibleTimeModel}, cost_function::static_cost, database::ClockSource, ReservationParameters, ReservationRequestAlternative, StartTimeRange
+    algorithms::sat_flexible_time_model::{Problem, SATFlexibleTimeModel},
+    cost_function::static_cost,
+    database::ClockSource,
+    ReservationParameters, ReservationRequestAlternative, StartTimeRange,
 };
 
 use rand::Rng;
-
 
 #[derive(Default, Clone)]
 struct FakeClock;
@@ -37,8 +44,9 @@ struct LiftAssigner {
 impl LiftAssigner {
     fn get_problem(&self) -> Problem {
         let mut problem = Problem::default();
-        //let earliest_start = 
-        let mut request_id_to_lift: HashMap<usize, Vec<(usize, usize, (usize, usize))>> = HashMap::new();
+        //let earliest_start =
+        let mut request_id_to_lift: HashMap<usize, Vec<(usize, usize, (usize, usize))>> =
+            HashMap::new();
         for robot in &self.robots {
             let mut lift_alternatives = vec![];
             let mut start_and_dest_floors = vec![];
@@ -57,10 +65,10 @@ impl LiftAssigner {
                         resource_name: format!("lift_{}", lift_id),
                         start_time: StartTimeRange {
                             earliest_start: Some(self.start_time + *time_to_lift),
-                            latest_start: None
+                            latest_start: None,
                         },
-                        duration: Some(time_in_lift)
-                    }
+                        duration: Some(time_in_lift),
+                    },
                 };
                 lift_alternatives.push(req);
                 start_and_dest_floors.push((lift_id, robot.start_floor, robot.end_floor));
@@ -73,9 +81,9 @@ impl LiftAssigner {
                 let (lift_id, start_floor, dest_floor) = start_and_dest_floors[i];
                 if let Some(p) = request_id_to_lift.get_mut(&lift_id) {
                     p.push((start_floor, dest_floor, (req_id, i)));
-                }
-                else {
-                    request_id_to_lift.insert(lift_id, vec![(start_floor, dest_floor, (req_id, i))]);
+                } else {
+                    request_id_to_lift
+                        .insert(lift_id, vec![(start_floor, dest_floor, (req_id, i))]);
                 }
             }
 
@@ -93,11 +101,12 @@ impl LiftAssigner {
                         let next_req_id = tasks[to].2;
 
                         let diff = prev_dest.abs_diff(next_pickup);
-                        let transition_time = (0..diff).fold(chrono::Duration::new(0, 0).unwrap(), |a, _| {
-                                 a + self.lift_time_per_floor
+                        let transition_time = (0..diff)
+                            .fold(chrono::Duration::new(0, 0).unwrap(), |a, _| {
+                                a + self.lift_time_per_floor
                             });
 
-                        // We can encode the minimum transition time to be dependent on the next. 
+                        // We can encode the minimum transition time to be dependent on the next.
                         problem.require_minimum_gap(&prev_req_id, &next_req_id, transition_time);
                     }
                 }
@@ -109,7 +118,6 @@ impl LiftAssigner {
 }
 
 fn main() {
-
     let num_robots = 10;
     let max_floors = 30;
     let num_lifts = 2;
@@ -117,34 +125,36 @@ fn main() {
     let max_time_to = 500;
 
     let mut num = rand::thread_rng();
-    
-    let robots: Vec<_> = (0..num_robots).map(|_|{
-        Robot {
-            time_from_start_to_lift_travel: (0..num_lifts).map(|_| chrono::Duration::new(num.gen_range(0..max_time_to), 0).unwrap()).collect(),
-            time_from_lift_to_destination: (0..num_lifts).map(|_| chrono::Duration::new(num.gen_range(0..max_time_to), 0).unwrap()).collect(),
+
+    let robots: Vec<_> = (0..num_robots)
+        .map(|_| Robot {
+            time_from_start_to_lift_travel: (0..num_lifts)
+                .map(|_| chrono::Duration::new(num.gen_range(0..max_time_to), 0).unwrap())
+                .collect(),
+            time_from_lift_to_destination: (0..num_lifts)
+                .map(|_| chrono::Duration::new(num.gen_range(0..max_time_to), 0).unwrap())
+                .collect(),
             start_floor: num.gen_range(1..max_floors),
             end_floor: num.gen_range(1..max_floors),
-        }
-    }).collect();
+        })
+        .collect();
 
-    let lifts: Vec<_> = (0..num_lifts).map(|_|{Lift}).collect();
+    let lifts: Vec<_> = (0..num_lifts).map(|_| Lift).collect();
     let my_clock = FakeClock::default();
     let lift_assigner = LiftAssigner {
         robots,
         lifts,
         lift_time_per_floor: chrono::Duration::new(60, 0).unwrap(),
-        start_time: my_clock.now()
+        start_time: my_clock.now(),
     };
 
     let problem = lift_assigner.get_problem();
     let (sender, rx) = std::sync::mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
     let s = SATFlexibleTimeModel {
-        clock_source: my_clock
+        clock_source: my_clock,
     };
 
-    
-    
     let child = std::thread::spawn(move || {
         let timer = SystemTime::now();
         s.time_suboptimal_search_solver(&problem, sender, stop, 2);
@@ -156,5 +166,4 @@ fn main() {
         let res = format!("Sub-optimal solution found in: {:?}\n", timer.elapsed());
         file.write(&res.as_bytes());
     }
-    
 }

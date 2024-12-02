@@ -116,13 +116,13 @@ impl Problem {
         Ok(())
     }
 
-    /// Require that there is a minimum gap between two reservations based on previous 
+    /// Require that there is a minimum gap between two reservations based on previous
     /// reservation conditions
     pub fn require_minimum_gap(
         &mut self,
         a: &(usize, usize),
         b: &(usize, usize),
-        duration: chrono::Duration
+        duration: chrono::Duration,
     ) -> Result<(), String> {
         if a.0 >= self.requests.len()
             || a.1 >= self.requests[a.0].len()
@@ -635,7 +635,6 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
         let mut solver = Solver::new();
         solver.add_formula(&formula);
 
-
         let mut solved = false;
 
         let current_time = self.clock_source.now();
@@ -766,18 +765,14 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                 node_map.insert(v, pgraph.add_node(v));
             }
             for (after, before) in edges {
-                println!("{:?} {:?}", after,before);
+                println!("{:?} {:?}", after, before);
                 let Some(a) = node_map.get(&after) else {
                     continue;
                 };
                 let Some(b) = node_map.get(&before) else {
                     continue;
                 };
-                pgraph.add_edge(
-                    *a,
-                    *b,
-                    true,
-                );
+                pgraph.add_edge(*a, *b, true);
             }
             let Ok(res) = toposort(&pgraph, None) else {
                 panic!("Something wrong with SAT formula found cycle.");
@@ -849,7 +844,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
         }
     }
 
-     /// This class of solvers tries to pack all the alternatives into the shortest possible time window
+    /// This class of solvers tries to pack all the alternatives into the shortest possible time window
     /// It ignores the cost function. This is useful if you want to pack more items
     /// - `problem` - A reservation problem you want to solve.
     /// - `sender` - A channel by which the solver communicates its latest "best" solution. This is useful
@@ -861,7 +856,7 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
         problem: &Problem,
         sender: Sender<AlgorithmState>,
         stop: std::sync::Arc<AtomicBool>,
-        suboptimality_ratio: i32
+        suboptimality_ratio: i32,
     ) {
         let mut resources = HashMap::new();
         let mut id_to_resource = vec![];
@@ -1085,7 +1080,6 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
         let mut solver = Solver::new();
         solver.add_formula(&formula);
 
-
         let mut solved = false;
 
         let current_time = self.clock_source.now();
@@ -1216,18 +1210,14 @@ impl<CS: ClockSource + Clone + std::marker::Send + std::marker::Sync> SATFlexibl
                 node_map.insert(v, pgraph.add_node(v));
             }
             for (after, before) in edges {
-                println!("{:?} {:?}", after,before);
+                println!("{:?} {:?}", after, before);
                 let Some(a) = node_map.get(&after) else {
                     continue;
                 };
                 let Some(b) = node_map.get(&before) else {
                     continue;
                 };
-                pgraph.add_edge(
-                    *a,
-                    *b,
-                    true,
-                );
+                pgraph.add_edge(*a, *b, true);
             }
             let Ok(res) = toposort(&pgraph, None) else {
                 panic!("Something wrong with SAT formula found cycle.");
