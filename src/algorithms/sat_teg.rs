@@ -57,7 +57,7 @@ impl TEGSolver {
         let mut formula = varisat::CnfFormula::new();
 
         let mut request_id_to_resource_index = HashMap::new();
-        let mut alt_id_to_indices= HashMap::new();
+        let mut alt_id_to_indices = HashMap::new();
 
         // Build the time expansion graph
         for t in 0..max_time_idx {
@@ -67,13 +67,19 @@ impl TEGSolver {
                 for (req_id, p) in problem.requests.iter().enumerate() {
                     let mut awarded_alt = vec![];
                     for (alt_id, req) in p.iter().enumerate() {
-                       
                         if req.parameters.resource_name != idx_to_res[resource] {
                             continue;
                         }
-                        println!("{:?} {:?} => {:?} {:?}", req_id, alt_id, idx_to_res[resource], resource);
-                        request_id_to_resource_index.insert((req_id, alt_id), (awarded_res.len(), awarded_alt.len()));
-                        alt_id_to_indices.insert((resource, awarded_res.len(), awarded_alt.len()), (req_id, alt_id));
+                        println!(
+                            "{:?} {:?} => {:?} {:?}",
+                            req_id, alt_id, idx_to_res[resource], resource
+                        );
+                        request_id_to_resource_index
+                            .insert((req_id, alt_id), (awarded_res.len(), awarded_alt.len()));
+                        alt_id_to_indices.insert(
+                            (resource, awarded_res.len(), awarded_alt.len()),
+                            (req_id, alt_id),
+                        );
                         awarded_alt.push(Var::from_index(idx));
                         idx_to_alternative.insert(idx, (req_id, alt_id));
                         idx_to_time_idx.insert(idx, t);
@@ -86,7 +92,7 @@ impl TEGSolver {
                             Lit::from_var(*xy[1], false),
                         ]);
                     }
-                    
+
                     awarded_res.push(awarded_alt)
                 }
 
@@ -110,7 +116,10 @@ impl TEGSolver {
                     continue;
                 };
                 for t in 0..max_time_idx {
-                    println!("{:?}", (res_id, req_id, alt_id, req.parameters.resource_name.clone()));
+                    println!(
+                        "{:?}",
+                        (res_id, req_id, alt_id, req.parameters.resource_name.clone())
+                    );
                     let Some(indices) = request_id_to_resource_index.get(&(req_id, alt_id)) else {
                         return Err("Inconsitency in internal structures".to_string());
                     };
@@ -127,7 +136,10 @@ impl TEGSolver {
                     println!("Could not get resource {:?}", req.parameters.resource_name);
                     continue;
                 };
-                println!("resource {:?} -> {:?}", req.parameters.resource_name, res_id);
+                println!(
+                    "resource {:?} -> {:?}",
+                    req.parameters.resource_name, res_id
+                );
                 // Mark allowed time range
                 for t in 0..max_time_idx {
                     let Some(indices) = request_id_to_resource_index.get(&(req_id, alt_id)) else {
@@ -162,9 +174,7 @@ impl TEGSolver {
                     // (~x_{t-1} \land x_t) => (x_{t+1} \land x_{t+2}.... \land x_{t+dur})
                     if j + self.from_duration_to_indices(&duration) < max_time_idx {
                         println!("{:?} marking next few items {:?}", duration, j);
-                        for k in
-                            j + 1..j + self.from_duration_to_indices(&duration)
-                        {
+                        for k in j + 1..j + self.from_duration_to_indices(&duration) {
                             let k_var = decision_vars[k as usize][*res_id][indices.0][indices.1];
                             // This is the duration itself
                             formula.add_clause(&[
@@ -176,24 +186,26 @@ impl TEGSolver {
 
                         // This handles the transition time by adding an implication if starts at
                         // x_{t}
-                        for res in  0..decision_vars[j as usize].len() {
-                            for m in 0..decision_vars[j as usize][res].len() 
-                            {
+                        for res in 0..decision_vars[j as usize].len() {
+                            for m in 0..decision_vars[j as usize][res].len() {
                                 for n in 0..decision_vars[j as usize][res][m].len() {
-
-                                    let Some(other_req) = alt_id_to_indices.get(&(res,m,n)) else {
+                                    let Some(other_req) = alt_id_to_indices.get(&(res, m, n))
+                                    else {
                                         panic!("should never get here");
                                     };
-                                    
+
                                     let end_of_last = j + self.from_duration_to_indices(&duration);
-                                    let Some(earliest_start_for_next) = problem.min_delay.get(&((req_id, alt_id), *other_req)) else {
+                                    let Some(earliest_start_for_next) =
+                                        problem.min_delay.get(&((req_id, alt_id), *other_req))
+                                    else {
                                         continue;
                                     };
 
-
-                                    let earliest_start_for_next= end_of_last + self.from_duration_to_indices(&Some(*earliest_start_for_next));
-                                    for k in
-                                        end_of_last..earliest_start_for_next.min(max_time_idx)
+                                    let earliest_start_for_next = end_of_last
+                                        + self.from_duration_to_indices(&Some(
+                                            *earliest_start_for_next,
+                                        ));
+                                    for k in end_of_last..earliest_start_for_next.min(max_time_idx)
                                     {
                                         let k_var = decision_vars[k as usize][res][m][n];
                                         // This is the duration itself
@@ -204,9 +216,8 @@ impl TEGSolver {
                                         ]);
                                     }
                                 }
-                            }  
+                            }
                         }
-                        
                     }
                     // Otherwise its too late
                     else {
