@@ -32,7 +32,7 @@ impl TEGSolver {
     }
 
     pub fn solve(&self, problem: Problem) -> Result<HashMap<String, Vec<Assignment>>, String> {
-        //let decision_variables = HashMap::new();
+
         let mut resources = HashMap::new();
         let mut idx_to_res = Vec::new();
         for r in 0..problem.requests.len() {
@@ -109,6 +109,7 @@ impl TEGSolver {
 
         for req_id in 0..problem.requests.len() {
             let p = problem.requests[req_id].clone();
+
             // At least one of the alternatives must be true
             let mut or_clause = vec![];
             for (alt_id, req) in p.iter().enumerate() {
@@ -173,7 +174,7 @@ impl TEGSolver {
                     // For most cases this would work, unless the reservation starts at x0
                     // (~x_{t-1} \land x_t) => (x_{t+1} \land x_{t+2}.... \land x_{t+dur})
                     if j + self.from_duration_to_indices(&duration) < max_time_idx {
-                        println!("{:?} marking next few items {:?}", duration, j);
+                        println!("{:?} marking next few items {:?} for {:?}", duration, j, indices);
                         for k in j + 1..j + self.from_duration_to_indices(&duration) {
                             let k_var = decision_vars[k as usize][*res_id][indices.0][indices.1];
                             // This is the duration itself
@@ -208,6 +209,7 @@ impl TEGSolver {
                                     for k in end_of_last..earliest_start_for_next.min(max_time_idx)
                                     {
                                         let k_var = decision_vars[k as usize][res][m][n];
+                                        println!("Blocking {:?} when starting at {:?}", k, j);
                                         // This is the duration itself
                                         formula.add_clause(&[
                                             Lit::from_var(i_var, true),
@@ -433,6 +435,165 @@ fn test_multi_alternative_sat_solver() {
 
     let soln = solver.solve(problem);
     println!("{:?}", soln);
+    assert!(soln.is_ok());
+
+    /*let (sender, rx) = std::sync::mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    SATFlexibleTimeModel {
+        clock_source: DefaultUtcClock::default(),
+    }
+    .time_optimality_linear_search_solver(&problem, sender, stop);
+    let mut v = vec![];
+    for t in rx.iter() {
+        v.push(t);
+    }
+
+    let Some(last) = v.last() else {
+        panic!("Unable to get any solution");
+    };
+
+    let AlgorithmState::OptimalScheduleSolution(sched) = last else {
+        panic!("Optimal solution was not found");
+    };
+
+    assert_eq!(sched["Resource1"][0].id, (0usize, 0usize));
+    assert_eq!(sched["Resource1"].len(), 1usize);
+    assert_eq!(sched["Resource2"][0].id, (1usize, 1usize));
+    assert_eq!(sched["Resource2"].len(), 1usize);
+    assert_eq!(sched.len(), 2usize);*/
+}
+
+#[cfg(test)]
+#[test]
+fn test_single_alternative_sat_solver() {
+    use std::sync::Arc;
+
+    use crate::cost_function::static_cost;
+
+    use crate::database::DefaultUtcClock;
+    use crate::ReservationRequestAlternative;
+
+    let current_time = chrono::Utc::now();
+
+    let req1 = vec![ReservationRequestAlternative {
+        parameters: crate::ReservationParameters {
+            resource_name: "Resource1".to_string(),
+            duration: Some(chrono::Duration::seconds(50)),
+            start_time: crate::StartTimeRange {
+                earliest_start: Some(current_time + chrono::Duration::seconds(50)),
+                latest_start: Some(current_time + chrono::Duration::seconds(100)),
+            },
+        },
+        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+    }];
+
+    let req2 = vec![
+        ReservationRequestAlternative {
+            parameters: crate::ReservationParameters {
+                resource_name: "Resource1".to_string(),
+                duration: Some(chrono::Duration::seconds(50)),
+                start_time: crate::StartTimeRange {
+                    earliest_start: Some(current_time + chrono::Duration::seconds(100)),
+                    latest_start: Some(current_time + chrono::Duration::seconds(160)),
+                },
+            },
+            cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+        }
+    ];
+
+    let mut problem = Problem::default();
+    problem.request_one_of(req1);
+    problem.request_one_of(req2);
+
+    let solver = TEGSolver {
+        time_step: chrono::Duration::new(50, 0).unwrap(),
+        max_time_steps: chrono::Duration::new(250, 0).unwrap(),
+        start: current_time,
+    };
+
+    let soln = solver.solve(problem);
+    println!("{:?}", soln);
+
+    /*let (sender, rx) = std::sync::mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    SATFlexibleTimeModel {
+        clock_source: DefaultUtcClock::default(),
+    }
+    .time_optimality_linear_search_solver(&problem, sender, stop);
+    let mut v = vec![];
+    for t in rx.iter() {
+        v.push(t);
+    }
+
+    let Some(last) = v.last() else {
+        panic!("Unable to get any solution");
+    };
+
+    let AlgorithmState::OptimalScheduleSolution(sched) = last else {
+        panic!("Optimal solution was not found");
+    };
+
+    assert_eq!(sched["Resource1"][0].id, (0usize, 0usize));
+    assert_eq!(sched["Resource1"].len(), 1usize);
+    assert_eq!(sched["Resource2"][0].id, (1usize, 1usize));
+    assert_eq!(sched["Resource2"].len(), 1usize);
+    assert_eq!(sched.len(), 2usize);*/
+}
+
+#[cfg(test)]
+#[test]
+fn test_single_resource_sat_solver_with_min_delay() {
+    use std::sync::Arc;
+
+    use crate::cost_function::static_cost;
+
+    use crate::database::DefaultUtcClock;
+    use crate::ReservationRequestAlternative;
+
+    let current_time = chrono::Utc::now();
+
+    let req1 = vec![ReservationRequestAlternative {
+        parameters: crate::ReservationParameters {
+            resource_name: "Resource1".to_string(),
+            duration: Some(chrono::Duration::seconds(50)),
+            start_time: crate::StartTimeRange {
+                earliest_start: Some(current_time + chrono::Duration::seconds(50)),
+                latest_start: Some(current_time + chrono::Duration::seconds(400)),
+            },
+        },
+        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+    }];
+
+    let req2 = vec![
+        ReservationRequestAlternative {
+            parameters: crate::ReservationParameters {
+                resource_name: "Resource1".to_string(),
+                duration: Some(chrono::Duration::seconds(50)),
+                start_time: crate::StartTimeRange {
+                    earliest_start: Some(current_time + chrono::Duration::seconds(100)),
+                    latest_start: Some(current_time + chrono::Duration::seconds(160)),
+                },
+            },
+            cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+        }
+    ];
+
+    let mut problem = Problem::default();
+    problem.request_one_of(req1);
+    problem.request_one_of(req2);
+
+    problem.require_minimum_gap(&(0,0), &(1,0), chrono::Duration::seconds(50));
+    problem.require_minimum_gap(&(1,0), &(0,0), chrono::Duration::seconds(50));
+
+    let solver = TEGSolver {
+        time_step: chrono::Duration::new(50, 0).unwrap(),
+        max_time_steps: chrono::Duration::new(500, 0).unwrap(),
+        start: current_time,
+    };
+
+    let soln = solver.solve(problem);
+    println!("{:?}", soln);
+    assert!(soln.is_ok());
 
     /*let (sender, rx) = std::sync::mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));

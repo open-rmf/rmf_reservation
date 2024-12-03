@@ -88,7 +88,7 @@ impl LiftAssigner {
             }
 
             // Now calculate transition costs
-            for (_lift_id, tasks) in &request_id_to_lift {
+            /*for (_lift_id, tasks) in &request_id_to_lift {
                 for from in 0..tasks.len() {
                     for to in 0..tasks.len() {
                         if from == to {
@@ -110,7 +110,7 @@ impl LiftAssigner {
                         problem.require_minimum_gap(&prev_req_id, &next_req_id, transition_time);
                     }
                 }
-            }
+            }*/
         }
 
         problem
