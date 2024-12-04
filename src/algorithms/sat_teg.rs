@@ -1,17 +1,24 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{atomic::AtomicBool, mpsc::Sender, Arc},
+};
 
 use chrono::Utc;
-use itertools::Itertools;
-use varisat::{ExtendFormula, Lit, Solver, Var};
 
-use super::sat_flexible_time_model::{Assignment, Problem};
+use itertools::Itertools;
+use varisat::{CnfFormula, ExtendFormula, Lit, Solver, Var};
+
+use super::{
+    sat_flexible_time_model::{Assignment, Problem},
+    AlgorithmState,
+};
 
 /// Solve resource scheduling problems with
 /// time-expansions taken into mind.
 pub struct TEGSolver {
-    time_step: chrono::Duration,
-    max_time_steps: chrono::Duration,
-    start: chrono::DateTime<Utc>,
+    pub time_step: chrono::Duration,
+    pub max_time_steps: chrono::Duration,
+    pub start: chrono::DateTime<Utc>,
 }
 
 impl TEGSolver {
@@ -32,7 +39,6 @@ impl TEGSolver {
     }
 
     pub fn solve(&self, problem: Problem) -> Result<HashMap<String, Vec<Assignment>>, String> {
-
         let mut resources = HashMap::new();
         let mut idx_to_res = Vec::new();
         for r in 0..problem.requests.len() {
@@ -174,7 +180,10 @@ impl TEGSolver {
                     // For most cases this would work, unless the reservation starts at x0
                     // (~x_{t-1} \land x_t) => (x_{t+1} \land x_{t+2}.... \land x_{t+dur})
                     if j + self.from_duration_to_indices(&duration) < max_time_idx {
-                        println!("{:?} marking next few items {:?} for {:?}", duration, j, indices);
+                        println!(
+                            "{:?} marking next few items {:?} for {:?}",
+                            duration, j, indices
+                        );
                         for k in j + 1..j + self.from_duration_to_indices(&duration) {
                             let k_var = decision_vars[k as usize][*res_id][indices.0][indices.1];
                             // This is the duration itself
@@ -291,6 +300,321 @@ impl TEGSolver {
         for (_, vec) in unordered_schedule.iter_mut() {
             vec.sort_by(|a, b| a.start_time.cmp(&b.start_time))
         }
+
+        Ok(unordered_schedule)
+    }
+
+    pub fn solve_optimally(
+        &self,
+        problem: Problem,
+        sender: Sender<AlgorithmState>,
+        stop: Arc<AtomicBool>,
+    ) -> Result<HashMap<String, Vec<Assignment>>, String> {
+        let mut resources = HashMap::new();
+        let mut idx_to_res = Vec::new();
+        for r in 0..problem.requests.len() {
+            let r = problem.requests[r].clone();
+            for alt in r {
+                if resources.get(&alt.parameters.resource_name).is_some() {
+                    continue;
+                }
+                resources.insert(alt.parameters.resource_name.clone(), idx_to_res.len());
+                idx_to_res.push(alt.parameters.resource_name.clone());
+            }
+        }
+
+        let max_time_idx = self.max_time_steps.num_seconds() / self.time_step.num_seconds();
+
+        // Decisiont variables are a matrix of time x resources x requests x alternatives.
+        let mut decision_vars = vec![];
+        let mut idx = 0;
+        let mut idx_to_alternative = HashMap::new();
+        let mut idx_to_time_idx = HashMap::new();
+
+        let mut formula = varisat::CnfFormula::new();
+
+        let mut request_id_to_resource_index = HashMap::new();
+        let mut alt_id_to_indices = HashMap::new();
+
+        // Build the time expansion graph
+        for t in 0..max_time_idx {
+            let mut time_axis = vec![];
+            for resource in 0..idx_to_res.len() {
+                let mut awarded_res = vec![];
+                for (req_id, p) in problem.requests.iter().enumerate() {
+                    let mut awarded_alt = vec![];
+                    for (alt_id, req) in p.iter().enumerate() {
+                        if req.parameters.resource_name != idx_to_res[resource] {
+                            continue;
+                        }
+                        println!(
+                            "{:?} {:?} => {:?} {:?}",
+                            req_id, alt_id, idx_to_res[resource], resource
+                        );
+                        request_id_to_resource_index
+                            .insert((req_id, alt_id), (awarded_res.len(), awarded_alt.len()));
+                        alt_id_to_indices.insert(
+                            (resource, awarded_res.len(), awarded_alt.len()),
+                            (req_id, alt_id),
+                        );
+                        awarded_alt.push(Var::from_index(idx));
+                        idx_to_alternative.insert(idx, (req_id, alt_id));
+                        idx_to_time_idx.insert(idx, t);
+                        idx += 1;
+                    }
+                    // mutex clause
+                    for xy in awarded_alt.iter().combinations(2) {
+                        formula.add_clause(&[
+                            Lit::from_var(*xy[0], false),
+                            Lit::from_var(*xy[1], false),
+                        ]);
+                    }
+
+                    awarded_res.push(awarded_alt)
+                }
+
+                // Mutex for resources
+                // mutex clause.
+                for xy in awarded_res.iter().flatten().combinations(2) {
+                    formula
+                        .add_clause(&[Lit::from_var(*xy[0], false), Lit::from_var(*xy[1], false)]);
+                }
+                time_axis.push(awarded_res);
+            }
+            decision_vars.push(time_axis);
+        }
+
+        for req_id in 0..problem.requests.len() {
+            let p = problem.requests[req_id].clone();
+
+            // At least one of the alternatives must be true
+            let mut or_clause = vec![];
+            for (alt_id, req) in p.iter().enumerate() {
+                let Some(res_id) = resources.get(&req.parameters.resource_name) else {
+                    continue;
+                };
+                for t in 0..max_time_idx {
+                    println!(
+                        "{:?}",
+                        (res_id, req_id, alt_id, req.parameters.resource_name.clone())
+                    );
+                    let Some(indices) = request_id_to_resource_index.get(&(req_id, alt_id)) else {
+                        return Err("Inconsitency in internal structures".to_string());
+                    };
+                    let d_var = decision_vars[t as usize][*res_id][indices.0][indices.1];
+                    if req.falls_within_acceptable_time(&self.from_time_idx(t as usize)) {
+                        or_clause.push(Lit::from_var(d_var, true));
+                    }
+                }
+            }
+            formula.add_clause(&or_clause);
+
+            for (alt_id, req) in p.iter().enumerate() {
+                let Some(res_id) = resources.get(&req.parameters.resource_name) else {
+                    println!("Could not get resource {:?}", req.parameters.resource_name);
+                    continue;
+                };
+                println!(
+                    "resource {:?} -> {:?}",
+                    req.parameters.resource_name, res_id
+                );
+                // Mark allowed time range
+                for t in 0..max_time_idx {
+                    let Some(indices) = request_id_to_resource_index.get(&(req_id, alt_id)) else {
+                        return Err("Inconsitency in internal structures".to_string());
+                    };
+                    let d_var = decision_vars[t as usize][*res_id][indices.0][indices.1];
+                    if !req.falls_within_acceptable_time(&self.from_time_idx(t as usize)) {
+                        formula.add_clause(&[Lit::from_var(d_var, false)]);
+                        println!(
+                            "Not allowed {:?}",
+                            self.from_time_idx(t as usize) - self.start
+                        );
+                    }
+                }
+
+                for (i, j) in (0..max_time_idx).tuple_windows() {
+                    let Some(indices) = request_id_to_resource_index.get(&(req_id, alt_id)) else {
+                        return Err("Inconsitency in internal structures".to_string());
+                    };
+                    let i_var = decision_vars[i as usize][*res_id][indices.0][indices.1];
+                    let j_var = decision_vars[j as usize][*res_id][indices.0][indices.1];
+                    let duration = problem.requests[req_id][alt_id].parameters.duration;
+                    if !req.satisfies_request(&self.from_time_idx(j as usize), duration) {
+                        formula
+                            .add_clause(&[Lit::from_var(i_var, true), Lit::from_var(j_var, false)]);
+                        continue;
+                    }
+
+                    // Mark duration only if we can fit it in time window
+
+                    // For most cases this would work, unless the reservation starts at x0
+                    // (~x_{t-1} \land x_t) => (x_{t+1} \land x_{t+2}.... \land x_{t+dur})
+                    if j + self.from_duration_to_indices(&duration) < max_time_idx {
+                        println!(
+                            "{:?} marking next few items {:?} for {:?}",
+                            duration, j, indices
+                        );
+                        for k in j + 1..j + self.from_duration_to_indices(&duration) {
+                            let k_var = decision_vars[k as usize][*res_id][indices.0][indices.1];
+                            // This is the duration itself
+                            formula.add_clause(&[
+                                Lit::from_var(i_var, true),
+                                Lit::from_var(j_var, false),
+                                Lit::from_var(k_var, true),
+                            ]);
+                        }
+
+                        // This handles the transition time by adding an implication if starts at
+                        // x_{t}
+                        for res in 0..decision_vars[j as usize].len() {
+                            for m in 0..decision_vars[j as usize][res].len() {
+                                for n in 0..decision_vars[j as usize][res][m].len() {
+                                    let Some(other_req) = alt_id_to_indices.get(&(res, m, n))
+                                    else {
+                                        panic!("should never get here");
+                                    };
+
+                                    let end_of_last = j + self.from_duration_to_indices(&duration);
+                                    let Some(earliest_start_for_next) =
+                                        problem.min_delay.get(&((req_id, alt_id), *other_req))
+                                    else {
+                                        continue;
+                                    };
+
+                                    let earliest_start_for_next = end_of_last
+                                        + self.from_duration_to_indices(&Some(
+                                            *earliest_start_for_next,
+                                        ));
+                                    for k in end_of_last..earliest_start_for_next.min(max_time_idx)
+                                    {
+                                        let k_var = decision_vars[k as usize][res][m][n];
+                                        println!("Blocking {:?} when starting at {:?}", k, j);
+                                        // This is the duration itself
+                                        formula.add_clause(&[
+                                            Lit::from_var(i_var, true),
+                                            Lit::from_var(j_var, false),
+                                            Lit::from_var(k_var, false),
+                                        ]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Otherwise its too late
+                    else {
+                        println!("{:?} is too long to start from {:?}", duration, j);
+                        formula
+                            .add_clause(&[Lit::from_var(i_var, true), Lit::from_var(j_var, false)]);
+                    }
+                }
+            }
+        }
+
+        let mut solver = Solver::new();
+        solver.add_formula(&formula);
+        let Ok(ok) = solver.solve() else {
+            return Err("Hello".to_string());
+        };
+        if !ok {
+            return Err("No solution found".to_string());
+        }
+        let Some(model) = solver.model() else {
+            return Err("Unable to get model".to_string());
+        };
+
+        // Optimizer
+        let mut latest_time = model
+            .iter()
+            .map(|x| idx_to_time_idx[&x.index()])
+            .max()
+            .unwrap();
+        let mut optimal_found = false;
+        let mut best_model = model.clone();
+        while !optimal_found && !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            // TODO(arjoc): tweak for suboptimal solutions
+            latest_time = latest_time - 1;
+
+            // Shrink time window
+            let constricted_formula = CnfFormula::new();
+            for time in latest_time..max_time_idx {
+                for res in 0..decision_vars[time as usize].len() {
+                    for req_id in 0..decision_vars[time as usize][res].len() {
+                        for alt_id in 0..decision_vars[time as usize][res][req_id].len() {
+                            let var = decision_vars[time as usize][res][req_id][alt_id];
+                            formula.add_clause(&[Lit::from_var(var, false)]);
+                        }
+                    }
+                }
+            }
+            solver.add_formula(&constricted_formula);
+            let Ok(ok) = solver.solve() else {
+                optimal_found = true;
+                break;
+            };
+            if !ok {
+                optimal_found = true;
+                break;
+            }
+            let Some(model) = solver.model() else {
+                optimal_found = true;
+                break;
+            };
+            best_model = model.clone();
+            sender.send(AlgorithmState::FeasibleScheduleSolution(HashMap::new()));
+        }
+
+        // Reconstruct schedule
+        let mut earliest_start_and_res: HashMap<(usize, usize), i64> = HashMap::new();
+        for lit in best_model {
+            if !lit.is_positive() {
+                continue;
+            }
+            let Some(p) = idx_to_alternative.get(&lit.index()) else {
+                return Err("Got a decision var that is not in our original list. This is an eror that should never happen".to_string());
+            };
+            println!(
+                ": {:?} {:?}",
+                idx_to_time_idx[&lit.index()],
+                self.from_time_idx(idx_to_time_idx[&lit.index()] as usize) - self.start
+            );
+            if let Some(time) = earliest_start_and_res.get_mut(p) {
+                let var_time = idx_to_time_idx[&lit.index()];
+                if var_time < *time {
+                    *time = var_time;
+                }
+            } else {
+                earliest_start_and_res.insert(*p, idx_to_time_idx[&lit.index()]);
+            }
+        }
+
+        let mut unordered_schedule: HashMap<String, Vec<Assignment>> = HashMap::new();
+        for (alternative, time) in earliest_start_and_res {
+            let resource = problem.requests[alternative.0][alternative.1]
+                .parameters
+                .resource_name
+                .clone();
+            if let Some(sched) = unordered_schedule.get_mut(&resource) {
+                sched.push(Assignment {
+                    id: alternative.clone(),
+                    start_time: self.from_time_idx(time as usize),
+                });
+            } else {
+                unordered_schedule.insert(
+                    resource.clone(),
+                    vec![Assignment {
+                        id: alternative.clone(),
+                        start_time: self.from_time_idx(time as usize),
+                    }],
+                );
+            }
+        }
+        for (_, vec) in unordered_schedule.iter_mut() {
+            vec.sort_by(|a, b| a.start_time.cmp(&b.start_time))
+        }
+        sender.send(AlgorithmState::OptimalScheduleSolution(
+            unordered_schedule.clone(),
+        ));
 
         Ok(unordered_schedule)
     }
@@ -487,19 +811,17 @@ fn test_single_alternative_sat_solver() {
         cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
     }];
 
-    let req2 = vec![
-        ReservationRequestAlternative {
-            parameters: crate::ReservationParameters {
-                resource_name: "Resource1".to_string(),
-                duration: Some(chrono::Duration::seconds(50)),
-                start_time: crate::StartTimeRange {
-                    earliest_start: Some(current_time + chrono::Duration::seconds(100)),
-                    latest_start: Some(current_time + chrono::Duration::seconds(160)),
-                },
+    let req2 = vec![ReservationRequestAlternative {
+        parameters: crate::ReservationParameters {
+            resource_name: "Resource1".to_string(),
+            duration: Some(chrono::Duration::seconds(50)),
+            start_time: crate::StartTimeRange {
+                earliest_start: Some(current_time + chrono::Duration::seconds(100)),
+                latest_start: Some(current_time + chrono::Duration::seconds(160)),
             },
-            cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
-        }
-    ];
+        },
+        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+    }];
 
     let mut problem = Problem::default();
     problem.request_one_of(req1);
@@ -564,26 +886,24 @@ fn test_single_resource_sat_solver_with_min_delay() {
         cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
     }];
 
-    let req2 = vec![
-        ReservationRequestAlternative {
-            parameters: crate::ReservationParameters {
-                resource_name: "Resource1".to_string(),
-                duration: Some(chrono::Duration::seconds(50)),
-                start_time: crate::StartTimeRange {
-                    earliest_start: Some(current_time + chrono::Duration::seconds(100)),
-                    latest_start: Some(current_time + chrono::Duration::seconds(160)),
-                },
+    let req2 = vec![ReservationRequestAlternative {
+        parameters: crate::ReservationParameters {
+            resource_name: "Resource1".to_string(),
+            duration: Some(chrono::Duration::seconds(50)),
+            start_time: crate::StartTimeRange {
+                earliest_start: Some(current_time + chrono::Duration::seconds(100)),
+                latest_start: Some(current_time + chrono::Duration::seconds(160)),
             },
-            cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
-        }
-    ];
+        },
+        cost_function: Arc::new(static_cost::StaticCost::new(1.0)),
+    }];
 
     let mut problem = Problem::default();
     problem.request_one_of(req1);
     problem.request_one_of(req2);
 
-    problem.require_minimum_gap(&(0,0), &(1,0), chrono::Duration::seconds(50));
-    problem.require_minimum_gap(&(1,0), &(0,0), chrono::Duration::seconds(50));
+    problem.require_minimum_gap(&(0, 0), &(1, 0), chrono::Duration::seconds(50));
+    problem.require_minimum_gap(&(1, 0), &(0, 0), chrono::Duration::seconds(50));
 
     let solver = TEGSolver {
         time_step: chrono::Duration::new(50, 0).unwrap(),

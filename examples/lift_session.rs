@@ -7,7 +7,10 @@ use std::{
 
 use chrono::{TimeZone, Utc};
 use rmf_reservations::{
-    algorithms::sat_flexible_time_model::{Problem, SATFlexibleTimeModel},
+    algorithms::{
+        sat_flexible_time_model::{Problem, SATFlexibleTimeModel},
+        sat_teg::TEGSolver,
+    },
     cost_function::static_cost,
     database::ClockSource,
     ReservationParameters, ReservationRequestAlternative, StartTimeRange,
@@ -149,10 +152,11 @@ fn main() {
     };
 
     let problem = lift_assigner.get_problem();
+    let problem2 = problem.clone();
     let (sender, rx) = std::sync::mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
     let s = SATFlexibleTimeModel {
-        clock_source: my_clock,
+        clock_source: my_clock.clone(),
     };
 
     let child = std::thread::spawn(move || {
@@ -160,6 +164,30 @@ fn main() {
         s.time_suboptimal_search_solver(&problem, sender, stop, 2);
         println!("Optimality in: {:?}", timer.elapsed());
     });
+
+    let solver = TEGSolver {
+        time_step: chrono::Duration::new(60, 0).unwrap(),
+        max_time_steps: chrono::Duration::new(80 * 60, 0).unwrap(),
+        start: my_clock.now(),
+    };
+
+    let child2 = std::thread::spawn(move || {
+        let mut file = std::fs::File::create("perf.teg.txt").unwrap();
+        let (sender, rx) = std::sync::mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let timer = SystemTime::now();
+        std::thread::spawn(move || {
+            let soln = solver.solve_optimally(problem2, sender, stop);
+        });
+        for c in rx.iter() {
+            let res = format!("TEG solution found in: {:?}\n", timer.elapsed());
+            file.write(&res.as_bytes());
+        }
+        let res = format!("Optimal TEG solution found in: {:?}\n", timer.elapsed());
+        file.write(&res.as_bytes());
+    });
+
     let timer = SystemTime::now();
     let mut file = std::fs::File::create("perf.txt").unwrap();
     for c in rx.iter() {
