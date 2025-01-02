@@ -511,6 +511,7 @@ impl TEGSolver {
             }
         }
 
+        println!("Initial search");
         let mut solver = Solver::new();
         solver.add_formula(&formula);
         let Ok(ok) = solver.solve() else {
@@ -522,6 +523,7 @@ impl TEGSolver {
         let Some(model) = solver.model() else {
             return Err("Unable to get model".to_string());
         };
+        println!("Refinement search");
 
         // Optimizer
         let mut latest_time = model
@@ -533,16 +535,22 @@ impl TEGSolver {
         let mut best_model = model.clone();
         while !optimal_found && !stop.load(std::sync::atomic::Ordering::Relaxed) {
             // TODO(arjoc): tweak for suboptimal solutions
-            latest_time = latest_time - 1;
+            if latest_time == 1 {
+                optimal_found = true;
+                break;
+            }
+            latest_time -= 1;
+            println!("latest_time {:?}",latest_time );
+
 
             // Shrink time window
-            let constricted_formula = CnfFormula::new();
+            let mut constricted_formula = CnfFormula::new();
             for time in latest_time..max_time_idx {
                 for res in 0..decision_vars[time as usize].len() {
                     for req_id in 0..decision_vars[time as usize][res].len() {
                         for alt_id in 0..decision_vars[time as usize][res][req_id].len() {
                             let var = decision_vars[time as usize][res][req_id][alt_id];
-                            formula.add_clause(&[Lit::from_var(var, false)]);
+                            constricted_formula.add_clause(&[Lit::from_var(var, false)]);
                         }
                     }
                 }
@@ -562,6 +570,7 @@ impl TEGSolver {
             };
             best_model = model.clone();
             sender.send(AlgorithmState::FeasibleScheduleSolution(HashMap::new()));
+
         }
 
         // Reconstruct schedule
@@ -609,6 +618,7 @@ impl TEGSolver {
                 );
             }
         }
+
         for (_, vec) in unordered_schedule.iter_mut() {
             vec.sort_by(|a, b| a.start_time.cmp(&b.start_time))
         }
