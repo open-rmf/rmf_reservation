@@ -62,3 +62,7 @@ let stop = Arc::new(AtomicBool::new(false));
 let result = model.feasibility_analysis(&problem, stop);
 ```
 Note: It is much faster to check feasibility then optimize later on.
+
+# Integrating Routing Information
+
+In this section we explore how to integrate this with a routing mechanism.

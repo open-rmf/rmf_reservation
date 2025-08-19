@@ -20,11 +20,13 @@ pub mod greedy_solver;
 pub mod kuhn_munkres;
 pub mod sat;
 pub mod sat_flexible_time_model;
+pub mod sat_teg;
 
 #[derive(Debug, Clone)]
 
 pub enum AlgorithmState {
     FeasibleScheduleSolution(HashMap<String, Vec<Assignment>>),
+    OptimalScheduleSolution(HashMap<String, Vec<Assignment>>),
     OptimalSolution(HashMap<usize, usize>),
     PartialSolution(HashMap<usize, usize>, f64),
     NotFound,
@@ -57,6 +59,7 @@ impl<P: Clone + std::marker::Send + 'static> AlgorithmPool<P> {
         match self.proposed_solution {
             AlgorithmState::FeasibleScheduleSolution(_) => false, //TODO make true
             AlgorithmState::OptimalSolution(_) => false,
+            AlgorithmState::OptimalScheduleSolution(_) => false,
             AlgorithmState::PartialSolution(_, _) => true,
             AlgorithmState::NotFound => true,
             AlgorithmState::UnSolveable => false,
