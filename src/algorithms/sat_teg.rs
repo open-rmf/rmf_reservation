@@ -540,8 +540,7 @@ impl TEGSolver {
                 break;
             }
             latest_time -= 1;
-            println!("latest_time {:?}",latest_time );
-
+            println!("latest_time {:?}", latest_time);
 
             // Shrink time window
             let mut constricted_formula = CnfFormula::new();
@@ -570,7 +569,6 @@ impl TEGSolver {
             };
             best_model = model.clone();
             sender.send(AlgorithmState::FeasibleScheduleSolution(HashMap::new()));
-
         }
 
         // Reconstruct schedule
